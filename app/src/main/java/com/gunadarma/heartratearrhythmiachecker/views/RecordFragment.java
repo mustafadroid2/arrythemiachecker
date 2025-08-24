@@ -14,13 +14,14 @@ import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
+import androidx.navigation.fragment.NavHostFragment;
 
 import com.gunadarma.heartratearrhythmiachecker.R;
 import com.gunadarma.heartratearrhythmiachecker.databinding.FragmentRecordBinding;
 import com.gunadarma.heartratearrhythmiachecker.model.RecordEntry;
 import com.gunadarma.heartratearrhythmiachecker.service.DataRecordServiceImpl;
 import com.gunadarma.heartratearrhythmiachecker.service.MediaProcessingServiceImpl;
-import com.gunadarma.heartratearrhythmiachecker.util.AppConstant;
+import com.gunadarma.heartratearrhythmiachecker.constant.AppConstant;
 
 import java.io.File;
 import java.util.List;
@@ -56,6 +57,9 @@ public class RecordFragment extends Fragment {
         }
     };
 
+    // Camera ID
+    private int currentCameraId = Camera.CameraInfo.CAMERA_FACING_FRONT;
+
     // main task
     // - by default open camera and show record button
     // - give option to select video from gallery at the most bottom
@@ -82,6 +86,15 @@ public class RecordFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+
+        // Camera switch button click handler
+        binding.btnSwitchCamera.setOnClickListener(v -> {
+            if (isRecording) {
+                // Don't switch camera while recording
+                return;
+            }
+            switchCamera();
+        });
 
         // Recording Processes:
         // - [DONE] show camera preview & display record button
@@ -152,11 +165,24 @@ public class RecordFragment extends Fragment {
 
         // Select from gallery button click (bottom control)
         binding.btnSelectGallery.setOnClickListener(v -> {
-            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.READ_EXTERNAL_STORAGE)
-              != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(requireActivity(),
-                  new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, STORAGE_PERMISSION_REQUEST);
-                return;
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                // For Android 13 and above, use READ_MEDIA_VIDEO permission
+                if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.READ_MEDIA_VIDEO)
+                    != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(requireActivity(),
+                        new String[]{Manifest.permission.READ_MEDIA_VIDEO},
+                        STORAGE_PERMISSION_REQUEST);
+                    return;
+                }
+            } else {
+                // For Android 12 and below, use READ_EXTERNAL_STORAGE
+                if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.READ_EXTERNAL_STORAGE)
+                    != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(requireActivity(),
+                        new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
+                        STORAGE_PERMISSION_REQUEST);
+                    return;
+                }
             }
             launchGalleryPicker();
         });
@@ -179,51 +205,68 @@ public class RecordFragment extends Fragment {
         binding.btnDiscard.setOnClickListener(v -> {
             binding.tray.setVisibility(View.GONE);
             binding.videoView.setVideoURI(null);
+            binding.videoView.stopPlayback();
             binding.graphView.setVisibility(View.GONE);
+            binding.bottomControls.setVisibility(View.VISIBLE);
+
             // Reset to allow new recording or gallery selection
-            if (camera == null) {
-                startCamera();
-            }
+            startCamera();
+            binding.cameraPreview.setVisibility(View.VISIBLE);
             binding.btnRecord.setVisibility(View.VISIBLE);
+            binding.btnRecord.setImageResource(android.R.drawable.ic_btn_speak_now);
+            isRecording = false;
         });
 
-        MediaProcessingServiceImpl mediaProcessingService = new MediaProcessingServiceImpl();
-        binding.btnProcess.setOnClickListener(v -> {
-            new Thread(() -> {
-                mediaProcessingService.createHeartBeatsVideo(currentRecordID);
-
-                if (currentRecordID > 1) {
-                    RecordEntry entry = RecordEntry.builder()
-                        .id(currentRecordID)
-                        .patientName("")
-                        .createAt(System.currentTimeMillis())
-                        .status(RecordEntry.Status.UNCHECKED)
-                        .build();
-                    dataRecordService.saveData(entry);
-                }
-                // Ensure navigation happens after record creation
-                requireActivity().runOnUiThread(() -> {
-                    binding.graphView.setVisibility(View.VISIBLE);
-                    navigateToDetailFragment();
-                });
-            }).start();
-        });
         // Process button click (tray)
+        MediaProcessingServiceImpl mediaProcessingService = new MediaProcessingServiceImpl(requireContext());
+        binding.btnProcess.setOnClickListener(v -> {
+            // First create and save the record entry
+            if (currentRecordID > 0) {
+                // Execute database operation in background thread
+                new Thread(() -> {
+                    dataRecordService.saveData(
+                        RecordEntry.builder()
+                            .id(currentRecordID)
+                            .patientName("")
+                            .createAt(System.currentTimeMillis())
+                            .status(RecordEntry.Status.UNCHECKED)
+                            .build()
+                    );
+                    // Navigate on UI thread after save is complete
+                    requireActivity().runOnUiThread(this::navigateToDetailFragment);
+                }).start();
+            } else {
+                System.out.println("Unexpected process");
+            }
+        });
     }
 
     private void navigateToDetailFragment() {
         // Create a Bundle to pass the record ID
         Bundle bundle = new Bundle();
-        bundle.putString("id", String.valueOf(currentRecordID)); // Pass the record ID
+        bundle.putString("id", String.valueOf(currentRecordID));
 
+        // Create navigation options that pops up to the start destination
+        androidx.navigation.NavOptions navOptions = new androidx.navigation.NavOptions.Builder()
+            .setPopUpTo(R.id.HomeFragment, false) // Pop up to HomeFragment (not inclusive)
+            .build();
+
+        // Navigate with options
         androidx.navigation.NavController navController = androidx.navigation.Navigation.findNavController(requireView());
-        navController.navigate(R.id.action_recordFragment_to_detailFragment, bundle);
+        navController.navigate(R.id.action_recordFragment_to_detailFragment, bundle, navOptions);
     }
 
     private void launchGalleryPicker() {
         Intent intent = new Intent(Intent.ACTION_PICK);
-        intent.setType("video/*");
-        startActivityForResult(intent, GALLERY_VIDEO_REQUEST);
+        intent.setType("video/mp4");  // Only allow MP4 files
+        try {
+            startActivityForResult(intent, GALLERY_VIDEO_REQUEST);
+        } catch (android.content.ActivityNotFoundException e) {
+            // Show error if no gallery app is available
+            android.widget.Toast.makeText(requireContext(),
+                "No gallery app found to handle video selection",
+                android.widget.Toast.LENGTH_SHORT).show();
+        }
     }
     
     @Override
@@ -232,10 +275,63 @@ public class RecordFragment extends Fragment {
         if (requestCode == GALLERY_VIDEO_REQUEST && resultCode == android.app.Activity.RESULT_OK && data != null) {
             android.net.Uri videoUri = data.getData();
             if (videoUri != null) {
-                binding.tray.setVisibility(View.VISIBLE);
-                binding.videoView.setVideoURI(videoUri);
-                binding.videoView.seekTo(1);
-                binding.graphView.setVisibility(View.GONE);
+                // Verify if the selected file is actually an MP4
+                String mimeType = requireContext().getContentResolver().getType(videoUri);
+                if (mimeType != null && mimeType.equals("video/mp4")) {
+                    try {
+                        // Create directory if it doesn't exist
+                        File dataDirectory = new File(
+                            requireContext().getExternalFilesDir(null),
+                            String.format("%s/%s", AppConstant.DATA_DIR, currentRecordID)
+                        );
+                        if (!dataDirectory.exists()) {
+                            dataDirectory.mkdirs();
+                        }
+
+                        // Create destination file
+                        File destinationFile = new File(dataDirectory, AppConstant.ORIGINAL_VIDEO_NAME);
+                        currentVideoPath = destinationFile.getAbsolutePath();
+
+                        // Copy the file
+                        try (java.io.InputStream in = requireContext().getContentResolver().openInputStream(videoUri);
+                             java.io.OutputStream out = new java.io.FileOutputStream(destinationFile)) {
+                            byte[] buffer = new byte[8192];
+                            int read;
+                            while ((read = in.read(buffer)) != -1) {
+                                out.write(buffer, 0, read);
+                            }
+                            out.flush();
+                        }
+
+                        // Stop camera preview and release camera when showing selected video
+                        if (camera != null) {
+                            camera.stopPreview();
+                            camera.release();
+                            camera = null;
+                        }
+                        binding.cameraPreview.setVisibility(View.GONE);
+                        binding.btnRecord.setVisibility(View.GONE);
+                        binding.tray.setVisibility(View.VISIBLE);
+                        binding.videoView.setVideoPath(currentVideoPath);
+                        binding.videoView.setOnPreparedListener(mp -> {
+                            // Set looping playback
+                            mp.setLooping(true);
+                            // Start playing
+                            binding.videoView.start();
+                        });
+                        binding.videoView.seekTo(1);
+                        binding.graphView.setVisibility(View.GONE);
+                    } catch (java.io.IOException e) {
+                        android.util.Log.e("RecordFragment", "Error copying video file: " + e.getMessage());
+                        android.widget.Toast.makeText(requireContext(),
+                            "Error copying video file",
+                            android.widget.Toast.LENGTH_SHORT).show();
+                    }
+                } else {
+                    android.widget.Toast.makeText(requireContext(),
+                        "Please select an MP4 video file",
+                        android.widget.Toast.LENGTH_SHORT).show();
+                }
             }
         }
     }
@@ -249,7 +345,15 @@ public class RecordFragment extends Fragment {
 
     private void startCamera() {
         try {
-            camera = Camera.open();
+            // Try to open front camera first
+            camera = Camera.open(currentCameraId);
+
+            // If front camera fails, fall back to back camera
+            if (camera == null) {
+                currentCameraId = Camera.CameraInfo.CAMERA_FACING_BACK;
+                camera = Camera.open(currentCameraId);
+            }
+
             Camera.Parameters parameters = camera.getParameters();
             List<Camera.Size> supportedPreviewSizes = parameters.getSupportedPreviewSizes();
             List<Camera.Size> supportedVideoSizes = null;
@@ -356,15 +460,33 @@ public class RecordFragment extends Fragment {
             // Set the output resolution (make sure it matches preview size)
             mediaRecorder.setVideoSize(videoWidth, videoHeight);
 
-            // Set orientation
+            // Set orientation based on camera facing and device rotation
             int rotation = requireActivity().getWindowManager().getDefaultDisplay().getRotation();
-            int orientation = 0;
+            Camera.CameraInfo info = new Camera.CameraInfo();
+            Camera.getCameraInfo(currentCameraId, info);
+
+            int degrees = 0;
             switch (rotation) {
-                case Surface.ROTATION_0: orientation = 90; break;
-                case Surface.ROTATION_90: orientation = 0; break;
-                case Surface.ROTATION_180: orientation = 270; break;
-                case Surface.ROTATION_270: orientation = 180; break;
+                case Surface.ROTATION_0: degrees = 0; break;
+                case Surface.ROTATION_90: degrees = 90; break;
+                case Surface.ROTATION_180: degrees = 180; break;
+                case Surface.ROTATION_270: degrees = 270; break;
             }
+
+            int orientation;
+            if (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+                orientation = (info.orientation + degrees) % 360;
+                orientation = (360 - orientation) % 360;  // compensate the mirror
+            } else  // back-facing
+            {
+                orientation = (info.orientation - degrees + 360) % 360;
+            }
+
+            // For front camera, we need additional adjustment for recording
+            if (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+                orientation = (orientation + 180) % 360;  // Add 180 degrees rotation for front camera recording
+            }
+
             mediaRecorder.setOrientationHint(orientation);
 
             // Output file
@@ -424,6 +546,40 @@ public class RecordFragment extends Fragment {
                     camera.lock();
                 } catch (Exception ignored) {}
             }
+
+            // Set up video preview in the tray
+            if (currentVideoPath != null) {
+                requireActivity().runOnUiThread(() -> {
+                    // Hide camera preview and record button
+                    binding.cameraPreview.setVisibility(View.GONE);
+                    binding.btnRecord.setVisibility(View.GONE);
+                    binding.bottomControls.setVisibility(View.GONE);
+
+                    // Show tray with video preview
+                    binding.tray.setVisibility(View.VISIBLE);
+
+                    // Set up video playback
+                    android.widget.MediaController mediaController = new android.widget.MediaController(requireContext());
+                    binding.videoView.setMediaController(mediaController);
+                    mediaController.setAnchorView(binding.videoView);
+
+                    // Set video path and prepare for playback
+                    binding.videoView.setVideoPath(currentVideoPath);
+                    binding.videoView.setOnPreparedListener(mp -> {
+                        mp.setLooping(true);
+                        binding.videoView.start();
+                    });
+
+                    // Handle video click to toggle play/pause
+                    binding.videoView.setOnClickListener(v -> {
+                        if (binding.videoView.isPlaying()) {
+                            binding.videoView.pause();
+                        } else {
+                            binding.videoView.start();
+                        }
+                    });
+                });
+            }
         }
     }
 
@@ -446,8 +602,7 @@ public class RecordFragment extends Fragment {
                 return null;
             }
         }
-        String timeStamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
-        return new File(dataDirectory.getPath() + File.separator + "VID_" + timeStamp + ".mp4");
+        return new File(dataDirectory.getPath() + File.separator + AppConstant.ORIGINAL_VIDEO_NAME);
     }
 
     @Override
@@ -459,7 +614,16 @@ public class RecordFragment extends Fragment {
             }
         } else if (requestCode == STORAGE_PERMISSION_REQUEST) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                launchGalleryPicker();
+                // Check which permission was granted
+                if (permissions[0].equals(Manifest.permission.READ_MEDIA_VIDEO) ||
+                    permissions[0].equals(Manifest.permission.READ_EXTERNAL_STORAGE)) {
+                    launchGalleryPicker();
+                }
+            } else {
+                // Permission denied, show a message to the user
+                android.widget.Toast.makeText(requireContext(),
+                    "Storage permission is required to select videos",
+                    android.widget.Toast.LENGTH_SHORT).show();
             }
         }
     }
@@ -580,6 +744,125 @@ public class RecordFragment extends Fragment {
             } catch (Exception e) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    private void switchCamera() {
+        // Release the old camera
+        if (camera != null) {
+            camera.stopPreview();
+            camera.release();
+            camera = null;
+        }
+
+        // Switch camera ID
+        currentCameraId = (currentCameraId == Camera.CameraInfo.CAMERA_FACING_BACK) ?
+            Camera.CameraInfo.CAMERA_FACING_FRONT : Camera.CameraInfo.CAMERA_FACING_BACK;
+
+        // Try to open the new camera
+        try {
+            camera = Camera.open(currentCameraId);
+
+            // If camera open failed, try to fall back to the other camera
+            if (camera == null) {
+                currentCameraId = (currentCameraId == Camera.CameraInfo.CAMERA_FACING_BACK) ?
+                    Camera.CameraInfo.CAMERA_FACING_FRONT : Camera.CameraInfo.CAMERA_FACING_BACK;
+                camera = Camera.open(currentCameraId);
+
+                // If both cameras fail, show error
+                if (camera == null) {
+                    android.widget.Toast.makeText(requireContext(),
+                        "Failed to switch camera",
+                        android.widget.Toast.LENGTH_SHORT).show();
+                    return;
+                }
+            }
+
+            // Set up camera parameters
+            Camera.Parameters parameters = camera.getParameters();
+            List<Camera.Size> supportedPreviewSizes = parameters.getSupportedPreviewSizes();
+            List<Camera.Size> supportedVideoSizes = null;
+            try {
+                supportedVideoSizes = (List<Camera.Size>) Camera.class.getMethod("getSupportedVideoSizes").invoke(camera);
+            } catch (Exception e) {
+                supportedVideoSizes = supportedPreviewSizes;
+            }
+
+            // Find optimal size
+            Camera.Size chosenSize = null;
+            for (Camera.Size size : supportedPreviewSizes) {
+                for (Camera.Size vsize : supportedVideoSizes) {
+                    if (size.width == vsize.width && size.height == vsize.height) {
+                        if ((size.width == 1280 && size.height == 720) || (size.width == 720 && size.height == 1280)) {
+                            chosenSize = size;
+                            break;
+                        }
+                        if ((size.width == 640 && size.height == 480) || (size.width == 480 && size.height == 640)) {
+                            if (chosenSize == null) chosenSize = size;
+                        }
+                    }
+                }
+                if (chosenSize != null && (chosenSize.width == 1280 || chosenSize.width == 720)) break;
+            }
+            if (chosenSize == null && !supportedPreviewSizes.isEmpty()) {
+                chosenSize = supportedPreviewSizes.get(0);
+            }
+
+            if (chosenSize != null) {
+                parameters.setPreviewSize(chosenSize.width, chosenSize.height);
+                this.videoWidth = chosenSize.width;
+                this.videoHeight = chosenSize.height;
+            }
+
+            // Fix camera rotation
+            int rotation = requireActivity().getWindowManager().getDefaultDisplay().getRotation();
+            int degrees = 0;
+            switch (rotation) {
+                case Surface.ROTATION_0: degrees = 0; break;
+                case Surface.ROTATION_90: degrees = 90; break;
+                case Surface.ROTATION_180: degrees = 180; break;
+                case Surface.ROTATION_270: degrees = 270; break;
+            }
+
+            Camera.CameraInfo info = new Camera.CameraInfo();
+            Camera.getCameraInfo(currentCameraId, info);
+            int result;
+            if (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+                result = (info.orientation + degrees) % 360;
+                result = (360 - result) % 360;  // compensate the mirror
+            } else { // back-facing
+                result = (info.orientation - degrees + 360) % 360;
+            }
+            camera.setParameters(parameters);
+            camera.setDisplayOrientation(result);
+
+            // Create new preview with the switched camera
+            cameraPreview = new CameraPreview(requireContext(), camera);
+            FrameLayout preview = binding.cameraPreview;
+            preview.removeAllViews();
+            preview.addView(cameraPreview);
+
+            // Set aspect ratio of camera_preview container
+            if (chosenSize != null) {
+                int width = chosenSize.width;
+                int height = chosenSize.height;
+                if (result == 90 || result == 270) {
+                    int temp = width;
+                    width = height;
+                    height = temp;
+                }
+                String ratioString = width + ":" + height;
+                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams params =
+                        (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) preview.getLayoutParams();
+                params.dimensionRatio = ratioString;
+                preview.setLayoutParams(params);
+            }
+
+        } catch (Exception e) {
+            android.util.Log.e("RecordFragment", "Error switching camera: " + e.getMessage());
+            android.widget.Toast.makeText(requireContext(),
+                "Failed to switch camera",
+                android.widget.Toast.LENGTH_SHORT).show();
         }
     }
 }

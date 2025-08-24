@@ -2,8 +2,8 @@ package com.gunadarma.heartratearrhythmiachecker.service;
 
 import android.content.Context;
 
-import com.gunadarma.heartratearrhythmiachecker.database.RecordDatabase;
-import com.gunadarma.heartratearrhythmiachecker.database.RecordEntryDao;
+import com.gunadarma.heartratearrhythmiachecker.accessor.RecordDatabase;
+import com.gunadarma.heartratearrhythmiachecker.accessor.RecordEntryDao;
 import com.gunadarma.heartratearrhythmiachecker.model.RecordEntry;
 
 import java.util.List;
@@ -43,7 +43,7 @@ public class DataRecordServiceImpl {
     }
 
     public List<RecordEntry> listRecords() {
-        return recordEntryDao.listRecords();
+        return recordEntryDao.listRecordsDesc();
     }
 
     public RecordEntry saveData(RecordEntry record) {
@@ -60,6 +60,6 @@ public class DataRecordServiceImpl {
     public long getNextId() {
         List<RecordEntry> current = recordEntryDao.listRecords();
         int lastIndex = current != null ? current.size() - 1 : -1;
-        return current != null && lastIndex != -1 ? current.get(lastIndex).getId() + 1  : 0;
+        return current != null && lastIndex != -1 ? current.get(lastIndex).getId() + 1  : 1;
     }
 }

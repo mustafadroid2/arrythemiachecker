@@ -1,5 +1,6 @@
 package com.gunadarma.heartratearrhythmiachecker.views;
 
+import android.app.Dialog;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -10,14 +11,20 @@ import androidx.fragment.app.Fragment;
 import androidx.navigation.fragment.NavHostFragment;
 
 import com.gunadarma.heartratearrhythmiachecker.R;
+import com.gunadarma.heartratearrhythmiachecker.constant.AppConstant;
 import com.gunadarma.heartratearrhythmiachecker.databinding.FragmentDetailBinding;
 import com.gunadarma.heartratearrhythmiachecker.model.RecordEntry;
 import com.gunadarma.heartratearrhythmiachecker.service.DataRecordServiceImpl;
+
+import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 
 import android.util.Log;
+import android.widget.ImageButton;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.gunadarma.heartratearrhythmiachecker.service.MediaProcessingServiceImpl;
 import com.gunadarma.heartratearrhythmiachecker.util.AppUtil;
 
 public class DetailFragment extends Fragment {
@@ -41,7 +48,7 @@ public class DetailFragment extends Fragment {
     }
 
     @Override
-    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+    public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
         // Log getArguments() as JSON
@@ -66,85 +73,56 @@ public class DetailFragment extends Fragment {
         }
         binding.detailContent.setVisibility(View.GONE); // Wrap your detail content in a layout with id detailContent
 
+        // Setup floating action buttons
         binding.btnEdit.setOnClickListener(v -> {
-            isEditMode = true;
-            binding.textPatientName.setVisibility(View.GONE);
-            binding.editPatientName.setVisibility(View.VISIBLE);
-            binding.textDate.setVisibility(View.GONE);
-            binding.btnPickDate.setVisibility(View.VISIBLE);
-            binding.editDateLabel.setVisibility(View.VISIBLE);
-            binding.textNotes.setVisibility(View.GONE);
-            binding.editNotes.setVisibility(View.VISIBLE);
-            binding.textDuration.setVisibility(View.GONE);
-            binding.editDuration.setVisibility(View.VISIBLE);
+            setEditMode(true);
             binding.btnEdit.setVisibility(View.GONE);
-            binding.btnSave.setVisibility(View.VISIBLE);
-            if (currentRecordEntry != null) {
-                // @+id/DetailFragment
-                binding.editPatientName.setText(currentRecordEntry.getPatientName());
-                String dateStr = AppUtil.toDate(currentRecordEntry.getCreateAt());
-                binding.editDateLabel.setText(dateStr);
-                binding.editNotes.setText(currentRecordEntry.getNotes() != null ? currentRecordEntry.getNotes() : "");
-                binding.editDuration.setText(String.valueOf(currentRecordEntry.getDuration()));
-            }
+            binding.btnSaveFloat.setVisibility(View.VISIBLE);
+            binding.btnCancel.setVisibility(View.VISIBLE);
         });
 
-        binding.btnPickDate.setOnClickListener(v -> {
-            java.util.Calendar calendar = java.util.Calendar.getInstance();
-            String currentDate = binding.editDateLabel.getText().toString();
-            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault());
-            try {
-                java.util.Date date = sdf.parse(currentDate);
-                calendar.setTime(date);
-            } catch (Exception ignored) {}
-            new android.app.DatePickerDialog(requireContext(), (view1, year, month, dayOfMonth) -> {
-                calendar.set(year, month, dayOfMonth);
-                binding.editDateLabel.setText(sdf.format(calendar.getTime()));
-            }, calendar.get(java.util.Calendar.YEAR), calendar.get(java.util.Calendar.MONTH), calendar.get(java.util.Calendar.DAY_OF_MONTH)).show();
-        });
-
-        binding.btnSave.setOnClickListener(v -> {
+        binding.btnSaveFloat.setOnClickListener(v -> {
             if (currentRecordEntry != null) {
-                String newName = binding.editPatientName.getText().toString();
-                String newDateStr = binding.editDateLabel.getText().toString();
-                String newNotes = binding.editNotes.getText().toString();
-                int newDuration = 0;
+                // Update record with edited values
+                currentRecordEntry.setPatientName(binding.editPatientName.getText().toString());
+                currentRecordEntry.setNotes(binding.editNotes.getText().toString());
                 try {
-                    newDuration = Integer.parseInt(binding.editDuration.getText().toString());
-                } catch (Exception ignored) {}
-                currentRecordEntry.setPatientName(newName);
-                currentRecordEntry.setNotes(newNotes);
-                currentRecordEntry.setDuration(newDuration);
-                try {
-                    java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault());
-                    java.util.Date newDate = sdf.parse(newDateStr);
-                    currentRecordEntry.setCreateAt(newDate.getTime());
-                } catch (Exception ignored) {}
-                int finalNewDuration = newDuration;
+                    currentRecordEntry.setDuration(Integer.parseInt(binding.editDuration.getText().toString()));
+                } catch (NumberFormatException e) {
+                    // Handle invalid duration input
+                    android.widget.Toast.makeText(requireContext(), "Invalid duration value", android.widget.Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                // Save in background thread
                 new Thread(() -> {
                     DataRecordServiceImpl dataRecordService = new DataRecordServiceImpl(requireContext());
                     dataRecordService.saveData(currentRecordEntry);
+
+                    // Update UI on main thread
                     requireActivity().runOnUiThread(() -> {
-                        binding.textPatientName.setText("Name: " + newName);
-                        binding.textDate.setText("Date: " + newDateStr);
-                        binding.textNotes.setText("Notes: " + newNotes);
-                        binding.textDuration.setText("Duration: " + finalNewDuration);
-                        binding.textPatientName.setVisibility(View.VISIBLE);
-                        binding.editPatientName.setVisibility(View.GONE);
-                        binding.textDate.setVisibility(View.VISIBLE);
-                        binding.btnPickDate.setVisibility(View.GONE);
-                        binding.editDateLabel.setVisibility(View.GONE);
-                        binding.textNotes.setVisibility(View.VISIBLE);
-                        binding.editNotes.setVisibility(View.GONE);
-                        binding.textDuration.setVisibility(View.VISIBLE);
-                        binding.editDuration.setVisibility(View.GONE);
+                        setEditMode(false);
+                        binding.btnSaveFloat.setVisibility(View.GONE);
+                        binding.btnCancel.setVisibility(View.GONE);
                         binding.btnEdit.setVisibility(View.VISIBLE);
-                        binding.btnSave.setVisibility(View.GONE);
-                        isEditMode = false;
+                        updateDisplayValues();
+                        android.widget.Toast.makeText(requireContext(), "Updated", android.widget.Toast.LENGTH_SHORT).show();
                     });
                 }).start();
             }
         });
+
+        binding.btnCancel.setOnClickListener(v -> {
+            setEditMode(false);
+            binding.btnSaveFloat.setVisibility(View.GONE);
+            binding.btnCancel.setVisibility(View.GONE);
+            binding.btnEdit.setVisibility(View.VISIBLE);
+            // Reset edit fields to current values
+            updateDisplayValues();
+        });
+
+        // Remove the old save button click listener since we're using the floating button now
+        binding.btnSave.setVisibility(View.GONE);
 
         // Fetch record data asynchronously
         if (args != null && args.containsKey("id")) {
@@ -157,9 +135,8 @@ public class DetailFragment extends Fragment {
                     if (data != null) {
                         String recordDate = AppUtil.toDate(data.getCreateAt());
                         requireActivity().setTitle(String.format("Detail #%s", currentRecordEntry.getId()));
-                        binding.textId.setText("ID: " + data.getId());
+                        binding.textId.setText("#" + currentRecordEntry.getId() + " - " + recordDate);
                         binding.textPatientName.setText("Name: " + data.getPatientName());
-                        binding.textDate.setText("Date: " + recordDate);
                         binding.editDateLabel.setText(recordDate);
                         binding.textArrhythmia.setText("Status: " + data.getStatus().getValue());
                         binding.textHeartRate.setText("Heart Rate: " + data.getBeatsPerMinute());
@@ -168,6 +145,43 @@ public class DetailFragment extends Fragment {
                         binding.editNotes.setText(data.getNotes() != null ? data.getNotes() : "");
                         binding.textDuration.setText("Duration: " + data.getDuration());
                         binding.editDuration.setText(String.valueOf(data.getDuration()));
+
+                        // Set up video playback using the actual video file
+                        try {
+                            File videoFile = new File(
+                                requireContext().getExternalFilesDir(null),
+                                String.format("%s/%s/original.mp4", AppConstant.DATA_DIR, data.getId())
+                            );
+                            if (videoFile.exists()) {
+                                android.widget.MediaController mediaController = new android.widget.MediaController(requireContext());
+                                binding.videoView.setMediaController(mediaController);
+                                mediaController.setAnchorView(binding.videoView);
+
+                                // Set audio attributes to not interfere with background playback
+                                binding.videoView.setAudioFocusRequest(android.media.AudioManager.AUDIOFOCUS_NONE);
+                                binding.videoView.setVideoPath(videoFile.getAbsolutePath());
+
+                                // Show first frame without starting playback
+                                binding.videoView.setOnPreparedListener(mp -> {
+                                    mp.setLooping(true);
+                                    binding.videoView.seekTo(1);
+                                });
+
+                                binding.videoView.setOnClickListener(v -> {
+                                    if (binding.videoView.isPlaying()) {
+                                        binding.videoView.pause();
+                                    } else {
+                                        binding.videoView.start();
+                                    }
+                                });
+                            } else {
+                                Log.e("DetailFragment", "Video file not found: " + videoFile.getAbsolutePath());
+                                binding.videoContainer.setVisibility(View.GONE);
+                            }
+                        } catch (Exception e) {
+                            Log.e("DetailFragment", "Failed to load video: " + e.getMessage());
+                            binding.videoContainer.setVisibility(View.GONE);
+                        }
                     }
                     if (binding.progressBar != null) {
                         binding.progressBar.setVisibility(View.GONE);
@@ -185,25 +199,6 @@ public class DetailFragment extends Fragment {
             }
         } catch (Exception e) {
             Log.e("DetailFragment", "Failed to load mock_heartbeats.webp", e);
-        }
-
-        // Provide video playback from res/raw/mock_video.mp4
-        try {
-            String videoPath = "android.resource://" + requireContext().getPackageName() + "/raw/mock_video";
-            binding.videoView.setVideoPath(videoPath);
-            android.widget.MediaController mediaController = new android.widget.MediaController(requireContext());
-            binding.videoView.setMediaController(mediaController);
-            mediaController.setAnchorView(binding.videoView);
-            binding.videoView.seekTo(1); // Show first frame
-            binding.videoView.setOnClickListener(v -> {
-                if (binding.videoView.isPlaying()) {
-                    binding.videoView.pause();
-                } else {
-                    binding.videoView.start();
-                }
-            });
-        } catch (Exception e) {
-            Log.e("DetailFragment", "Failed to load mock video", e);
         }
 
         // Delete record
@@ -238,6 +233,96 @@ public class DetailFragment extends Fragment {
             shareIntent.putExtra(android.content.Intent.EXTRA_TEXT, "Hello World");
             startActivity(android.content.Intent.createChooser(shareIntent, "Share via"));
         });
+
+        // Set up click listener for graph image zoom
+        binding.graphView.setOnClickListener(v -> {
+            showFullscreenImage();
+        });
+
+        // Add process button click handler
+        binding.btnProcess.setOnClickListener(v -> {
+            // Show loading indicator
+            android.app.ProgressDialog progressDialog = new android.app.ProgressDialog(requireContext());
+            progressDialog.setMessage("Processing video...");
+            progressDialog.setCancelable(false);
+            progressDialog.show();
+
+            // Create and run processing task
+            new Thread(() -> {
+                try {
+                    MediaProcessingServiceImpl mediaProcessingService = new MediaProcessingServiceImpl(requireContext());
+                    mediaProcessingService.createHeartBeatsVideo(currentRecordEntry.getId());
+
+                    // Update record status after processing
+                    if (currentRecordEntry != null) {
+                        currentRecordEntry.setStatus(RecordEntry.Status.UNCHECKED);
+                        DataRecordServiceImpl dataRecordService = new DataRecordServiceImpl(requireContext());
+                        dataRecordService.saveData(currentRecordEntry);
+                    }
+
+                    // Update UI on completion
+                    requireActivity().runOnUiThread(() -> {
+                        progressDialog.dismiss();
+                        // Refresh the status display
+                        if (currentRecordEntry != null) {
+                            binding.textArrhythmia.setText("Status: " + currentRecordEntry.getStatus().getValue());
+                        }
+                        // Show success message
+                        android.widget.Toast.makeText(requireContext(),
+                            "Video processing completed",
+                            android.widget.Toast.LENGTH_SHORT).show();
+                    });
+                } catch (Exception e) {
+                    requireActivity().runOnUiThread(() -> {
+                        progressDialog.dismiss();
+                        android.widget.Toast.makeText(requireContext(),
+                            "Error processing video: " + e.getMessage(),
+                            android.widget.Toast.LENGTH_LONG).show();
+                    });
+                }
+            }).start();
+        });
+    }
+
+    private void showFullscreenImage() {
+        Dialog dialog = new Dialog(requireContext(), android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        dialog.setContentView(R.layout.dialog_fullscreen_image);
+
+        com.github.chrisbanes.photoview.PhotoView photoView = dialog.findViewById(R.id.fullscreen_image);
+        ImageButton closeButton = dialog.findViewById(R.id.btn_close);
+
+        // Copy the current drawable from the graph view
+        photoView.setImageDrawable(binding.graphView.getDrawable());
+
+        closeButton.setOnClickListener(v -> dialog.dismiss());
+
+        dialog.show();
+    }
+
+    private void setEditMode(boolean isEditing) {
+        int editVisibility = isEditing ? View.VISIBLE : View.GONE;
+        int textVisibility = isEditing ? View.GONE : View.VISIBLE;
+
+        binding.editPatientName.setVisibility(editVisibility);
+        binding.editNotes.setVisibility(editVisibility);
+        binding.editDuration.setVisibility(editVisibility);
+        binding.btnPickDate.setVisibility(editVisibility);
+        binding.editDateLabel.setVisibility(editVisibility);
+
+        binding.textPatientName.setVisibility(textVisibility);
+        binding.textNotes.setVisibility(textVisibility);
+        binding.textDuration.setVisibility(textVisibility);
+    }
+
+    private void updateDisplayValues() {
+        if (currentRecordEntry != null) {
+            binding.textPatientName.setText("Name: " + currentRecordEntry.getPatientName());
+            binding.editPatientName.setText(currentRecordEntry.getPatientName());
+            binding.textNotes.setText("Notes: " + (currentRecordEntry.getNotes() != null ? currentRecordEntry.getNotes() : ""));
+            binding.editNotes.setText(currentRecordEntry.getNotes() != null ? currentRecordEntry.getNotes() : "");
+            binding.textDuration.setText("Duration: " + currentRecordEntry.getDuration());
+            binding.editDuration.setText(String.valueOf(currentRecordEntry.getDuration()));
+        }
     }
 
     @Override

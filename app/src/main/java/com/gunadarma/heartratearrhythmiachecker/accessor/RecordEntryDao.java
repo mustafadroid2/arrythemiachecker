@@ -1,4 +1,4 @@
-package com.gunadarma.heartratearrhythmiachecker.database;
+package com.gunadarma.heartratearrhythmiachecker.accessor;
 
 import androidx.room.Dao;
 import androidx.room.Delete;
@@ -15,6 +15,9 @@ public interface RecordEntryDao {
 
     @Query("SELECT * FROM records")
     List<RecordEntry> listRecords();
+
+    @Query("SELECT * FROM records ORDER BY id DESC")
+    List<RecordEntry> listRecordsDesc();
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void insert(RecordEntry record);

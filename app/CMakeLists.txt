@@ -3,7 +3,7 @@ project(heartrate_opencv)
 
 # Set build type and C++ standard
 set(CMAKE_BUILD_TYPE Release)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Force using c++_shared
@@ -16,7 +16,7 @@ add_library(c++_shared SHARED
 
 # Set library properties
 set_target_properties(c++_shared PROPERTIES
-    CXX_STANDARD 17
+    CXX_STANDARD 11
     CXX_STANDARD_REQUIRED ON
     POSITION_INDEPENDENT_CODE ON)
 
@@ -35,8 +35,4 @@ add_custom_command(TARGET c++_shared POST_BUILD
         $<TARGET_FILE:c++_shared>
         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/jniLibs/${ANDROID_ABI}/
 
-#    COMMAND ${CMAKE_COMMAND} -E copy
-#        ${CMAKE_CURRENT_SOURCE_DIR}/../opencv/jniLibs/${ANDROID_ABI}/libopencv_java4.so
-#        ${CMAKE_CURRENT_SOURCE_DIR}/src/main/jniLibs/${ANDROID_ABI}/
-#
     COMMENT "Copying OpenCV library to jniLibs directory")

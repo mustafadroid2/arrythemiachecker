@@ -30,7 +30,8 @@
                 android:text="Seed Demo Data"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
-                android:layout_marginBottom="32dp" />
+                android:layout_marginBottom="32dp"
+                android:visibility="gone" />
 
             <!-- Brief description -->
             <TextView

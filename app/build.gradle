@@ -4,19 +4,19 @@ plugins {
 
 android {
     namespace 'com.gunadarma.heartratearrhythmiachecker'
-    compileSdk 36
+    compileSdk 34
 
     defaultConfig {
         applicationId 'com.gunadarma.heartratearrhythmiachecker'
-        minSdk 28
-        targetSdk 36
+        minSdk 26
+        targetSdk 34
         versionCode 1
         versionName "1.0"
 
         externalNativeBuild {
             cmake {
                 arguments "-DANDROID_STL=c++_shared"
-                cppFlags "-std=c++17"
+                cppFlags "-std=c++11"
             }
         }
         ndk {
@@ -24,7 +24,7 @@ android {
         }
     }
 
-    ndkVersion "29.0.13846066"
+    ndkVersion "27.0.12077973"
 
     externalNativeBuild {
         cmake {
@@ -34,10 +34,6 @@ android {
     }
 
     packagingOptions {
-        jniLibs {
-            useLegacyPackaging false
-            pickFirst '**/*.so'
-        }
         pickFirst '**/libc++_shared.so'
     }
 
@@ -75,9 +71,17 @@ dependencies {
     implementation project(':opencv')
     implementation fileTree(dir: 'libs', include: ['*.jar'])
     implementation "androidx.multidex:multidex:2.0.1"
+    implementation 'com.github.chrisbanes:PhotoView:2.3.0'
+    implementation 'com.google.android.material:material:1.9.0'
 
     testImplementation "androidx.room:room-testing:2.5.2"
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
+
+    // Testing dependencies
+    testImplementation 'org.mockito:mockito-core:5.5.0'
+    // testImplementation 'org.mockito:mockito-inline:5.5.0'
+    testImplementation 'org.robolectric:robolectric:4.10.3'
+    androidTestImplementation 'org.mockito:mockito-android:5.5.0'
 }

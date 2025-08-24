@@ -2,7 +2,7 @@ package com.gunadarma.heartratearrhythmiachecker;
 
 import android.widget.Toast;
 import androidx.multidex.MultiDexApplication;
-import com.gunadarma.heartratearrhythmiachecker.opencv.OpenCVLoader;
+import com.gunadarma.heartratearrhythmiachecker.service.loader.OpenCVLoader;
 
 public class ArrhythmiaApplication extends MultiDexApplication {
     @Override

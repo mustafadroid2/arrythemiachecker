@@ -1,4 +1,4 @@
-package com.gunadarma.heartratearrhythmiachecker.database;
+package com.gunadarma.heartratearrhythmiachecker.accessor;
 
 import android.content.Context;
 import androidx.room.Database;
@@ -9,7 +9,11 @@ import androidx.room.TypeConverters;
 import com.gunadarma.heartratearrhythmiachecker.model.RecordEntry;
 import com.gunadarma.heartratearrhythmiachecker.util.Converters;
 
-@Database(entities = {RecordEntry.class}, version = 1)
+@Database(
+    entities = {RecordEntry.class},
+    version = 1,
+    exportSchema = false
+)
 @TypeConverters({Converters.class})
 public abstract class RecordDatabase extends RoomDatabase {
     public abstract RecordEntryDao recordEntryDao();
@@ -22,6 +26,7 @@ public abstract class RecordDatabase extends RoomDatabase {
                 if (INSTANCE == null) {
                     INSTANCE = Room.databaseBuilder(context.getApplicationContext(),
                             RecordDatabase.class, "record_database")
+                            .fallbackToDestructiveMigration()
                             .build();
                 }
             }

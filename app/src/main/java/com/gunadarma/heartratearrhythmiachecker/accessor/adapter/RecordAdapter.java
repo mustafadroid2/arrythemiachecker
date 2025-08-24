@@ -1,4 +1,4 @@
-package com.gunadarma.heartratearrhythmiachecker.adapter;
+package com.gunadarma.heartratearrhythmiachecker.accessor.adapter;
 
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -15,10 +15,7 @@ import com.gunadarma.heartratearrhythmiachecker.R;
 import com.gunadarma.heartratearrhythmiachecker.model.RecordEntry;
 import com.gunadarma.heartratearrhythmiachecker.util.AppUtil;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.List;
-import java.util.Locale;
 
 public class RecordAdapter extends RecyclerView.Adapter<RecordAdapter.RecordViewHolder> {
     private final Fragment parent;

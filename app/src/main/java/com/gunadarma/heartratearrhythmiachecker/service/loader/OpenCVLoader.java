@@ -1,4 +1,4 @@
-package com.gunadarma.heartratearrhythmiachecker.opencv;
+package com.gunadarma.heartratearrhythmiachecker.service.loader;
 
 import android.content.Context;
 import android.util.Log;
@@ -13,12 +13,14 @@ public class OpenCVLoader {
         }
 
         try {
+            // Load necessary libraries in the correct order
             System.loadLibrary("opencv_java4");
+            // System.loadLibrary("native-lib"); // OpenCV native library for Android
             sInitialized = true;
-            Log.d(TAG, "OpenCV library loaded successfully");
+            Log.d(TAG, "OpenCV libraries loaded successfully");
             return true;
         } catch (UnsatisfiedLinkError e) {
-            Log.e(TAG, "Failed to load OpenCV library: " + e.getMessage());
+            Log.e(TAG, "Failed to load OpenCV libraries: " + e.getMessage());
             return false;
         }
     }

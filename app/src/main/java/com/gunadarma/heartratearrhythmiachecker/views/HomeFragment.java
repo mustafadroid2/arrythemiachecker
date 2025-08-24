@@ -11,7 +11,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import com.gunadarma.heartratearrhythmiachecker.R;
 import com.gunadarma.heartratearrhythmiachecker.databinding.FragmentHomeBinding;
 import com.gunadarma.heartratearrhythmiachecker.service.DataRecordServiceImpl;
-import com.gunadarma.heartratearrhythmiachecker.adapter.RecordAdapter;
+import com.gunadarma.heartratearrhythmiachecker.accessor.adapter.RecordAdapter;
 
 public class HomeFragment extends Fragment {
 

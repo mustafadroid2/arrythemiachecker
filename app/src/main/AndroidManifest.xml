@@ -2,13 +2,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools" >
 
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.CAMERA"
+        android:attributionTags="camera_heart_rate" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO"
+        android:attributionTags="audio_heart_rate" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"
+        android:attributionTags="media_heart_rate" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
+        android:maxSdkVersion="32"
+        android:attributionTags="storage_heart_rate" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
+        android:maxSdkVersion="28"
+        android:attributionTags="storage_heart_rate" />
 
 
     <uses-feature
@@ -35,5 +40,18 @@
             </intent-filter>
         </activity>
     </application>
+
+    <attribution
+        android:tag="camera_heart_rate"
+        android:label="@string/app_name" />
+    <attribution
+        android:tag="audio_heart_rate"
+        android:label="@string/app_name" />
+    <attribution
+        android:tag="media_heart_rate"
+        android:label="@string/app_name" />
+    <attribution
+        android:tag="storage_heart_rate"
+        android:label="@string/app_name" />
 
 </manifest>
