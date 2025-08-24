@@ -37,7 +37,7 @@ android {
             java.srcDirs = ['java/src']
             resources.srcDirs = ['java/src']
             res.srcDirs = ['java/res']
-            jniLibs.srcDirs = ['native/libs', 'app/jniLibs']
+            jniLibs.srcDirs = ['native/libs']
         }
     }
 
@@ -54,15 +54,33 @@ android {
     }
 }
 
+tasks.register('cleanJniLibs') {
+    doLast {
+        delete fileTree('../app/src/main/jniLibs/') {
+            include '**/*.so'
+        }
+    }
+}
+
 tasks.register('copyOpenCVLibs') {
+    dependsOn cleanJniLibs
     doLast {
         ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'].each { abi ->
+            def targetDir = file("../app/src/main/jniLibs/${abi}/")
+            targetDir.mkdirs()
+
             copy {
-                from("native/libs/${abi}/libopencv_java4.so")
-                into("../app/src/main/jniLibs/${abi}/")
+                from("native/libs/${abi}")
+                include "*.so"
+                into(targetDir)
+                fileMode 0644
             }
         }
     }
+}
+
+tasks.named('clean') {
+    dependsOn('cleanJniLibs')
 }
 
 preBuild.dependsOn(copyOpenCVLibs)

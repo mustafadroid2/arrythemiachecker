@@ -24,7 +24,7 @@ android {
         }
     }
 
-    ndkVersion "27.0.12077973"
+    ndkVersion "29.0.13846066"
 
     externalNativeBuild {
         cmake {
@@ -35,6 +35,10 @@ android {
 
     packagingOptions {
         pickFirst '**/libc++_shared.so'
+        pickFirst '**/libopencv_java4.so'
+        jniLibs {
+            useLegacyPackaging true
+        }
     }
 
     buildFeatures {

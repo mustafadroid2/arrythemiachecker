@@ -90,8 +90,8 @@ public class MediaProcessingServiceImpl implements MediaProcessingService {
         while (cap.read(frame)) {
             if (frame.empty()) continue;
 
-            // Resize for faster processing
-            Imgproc.resize(frame, resized, new Size(320, 240));
+            // Resize for faster processing (9:16 aspect ratio)
+            Imgproc.resize(frame, resized, new Size(240, 426));
 
             // Convert to RGB
             Imgproc.cvtColor(resized, rgb, Imgproc.COLOR_BGR2RGB);
@@ -121,7 +121,7 @@ public class MediaProcessingServiceImpl implements MediaProcessingService {
                                                   List<Long> timestamps, double fps) {
         List<HeartRateData> heartRateDataList = new ArrayList<>();
 
-        // Convert lists to OpenCV Mats for signal processing
+        // Convert lists to OpenCV Mats with double precision
         Mat redMat = new Mat(red.size(), 1, CvType.CV_64F);
         Mat greenMat = new Mat(green.size(), 1, CvType.CV_64F);
         Mat blueMat = new Mat(blue.size(), 1, CvType.CV_64F);
@@ -142,6 +142,7 @@ public class MediaProcessingServiceImpl implements MediaProcessingService {
         channels.add(redDetrended);
         channels.add(greenDetrended);
         channels.add(blueDetrended);
+
         Mat signals = new Mat();
         Core.vconcat(channels, signals);
 
@@ -153,11 +154,17 @@ public class MediaProcessingServiceImpl implements MediaProcessingService {
         Mat eigenvectors = new Mat();
         Core.eigen(covar, eigenvalues, eigenvectors);
 
-        // Project signals onto first principal component
-        Mat projected = new Mat();
-        Core.gemm(signals, eigenvectors.row(0).t(), 1.0, new Mat(), 0.0, projected);
+        // Ensure eigenvectors matrix is proper type
+        if (eigenvectors.type() != CvType.CV_64F) {
+            eigenvectors.convertTo(eigenvectors, CvType.CV_64F);
+        }
 
-        // Apply bandpass filter (0.7 Hz - 4.0 Hz for heart rate range 42-240 BPM)
+        // Project signals onto first principal component
+        Mat firstEigenvector = eigenvectors.row(0);
+        Mat projected = new Mat();
+        Core.gemm(signals, firstEigenvector.t(), 1.0, new Mat(), 0.0, projected);
+
+        // Apply bandpass filter
         Mat filteredSignal = applyBandpassFilter(projected, fps);
 
         // Process signal in windows
@@ -166,18 +173,13 @@ public class MediaProcessingServiceImpl implements MediaProcessingService {
 
         for (int i = 0; i < filteredSignal.rows() - windowSize; i += stepSize) {
             Mat window = filteredSignal.rowRange(i, i + windowSize);
-
-            // Find peaks in the window
             List<Integer> peakIndices = findPeaks(window);
 
             if (!peakIndices.isEmpty()) {
-                // Calculate heart rate from peak intervals
                 double averageInterval = (double)windowSize / peakIndices.size();
                 double heartRate = 60.0 * fps / averageInterval;
 
-                // Only add valid heart rates
                 if (heartRate >= MIN_HR_BPM && heartRate <= MAX_HR_BPM) {
-                    // Convert window peaks to actual timestamps
                     for (Integer peakIndex : peakIndices) {
                         int globalIndex = i + peakIndex;
                         if (globalIndex < timestamps.size()) {
@@ -228,64 +230,82 @@ public class MediaProcessingServiceImpl implements MediaProcessingService {
     }
 
     private Mat detrendSignal(Mat signal) {
-        Mat detrended = new Mat();
-        signal.copyTo(detrended);
+        // Convert signal to double precision
+        Mat signalDouble = new Mat();
+        signal.convertTo(signalDouble, CvType.CV_64F);
 
-        // Apply moving average to remove trends
-        int kernelSize = (int)(FPS * 2); // 2-second window
-        if (kernelSize % 2 == 0) kernelSize++; // Make odd for centered window
+        // Create time vector
+        Mat timeVector = new Mat(signal.rows(), 1, CvType.CV_64F);
+        for (int i = 0; i < signal.rows(); i++) {
+            timeVector.put(i, 0, (double)i);
+        }
 
-        // Create and normalize kernel
-        Mat kernel = Mat.ones(kernelSize, 1, CvType.CV_64F);
-        Core.multiply(kernel, new Scalar(1.0/kernelSize), kernel);
-
-        // Apply detrending filter
+        // Fit linear trend
         Mat trend = new Mat();
-        Imgproc.filter2D(signal, trend, -1, kernel, new Point(-1, -1), 0, Core.BORDER_REFLECT);
-        Core.subtract(signal, trend, detrended);
+        Core.solve(timeVector, signalDouble, trend, Core.DECOMP_SVD);
 
-        // Normalize the signal
+        // Ensure trend matrix is proper size and type
+        if (trend.rows() != 1) {
+            Core.transpose(trend, trend);
+        }
+
+        // Calculate and remove trend
+        Mat detrended = new Mat();
+        Mat trendLine = timeVector.mul(trend);
+        Core.subtract(signalDouble, trendLine, detrended);
+
+        // Normalize
         Core.normalize(detrended, detrended, 0, 1, Core.NORM_MINMAX);
 
         return detrended;
     }
 
     private Mat applyBandpassFilter(Mat signal, double fps) {
-        Mat paddedSignal = new Mat();
-        int m = Core.getOptimalDFTSize(signal.rows());
-        Core.copyMakeBorder(signal, paddedSignal, 0, m - signal.rows(), 0, 0, Core.BORDER_CONSTANT, Scalar.all(0));
+        // Convert signal to double precision
+        Mat signalDouble = new Mat();
+        signal.convertTo(signalDouble, CvType.CV_64F);
 
-        // Convert to frequency domain
+        // Prepare for FFT
+        int rows = signalDouble.rows();
+        int optimalRows = Core.getOptimalDFTSize(rows);
+        Mat padded = new Mat();
+        Core.copyMakeBorder(signalDouble, padded, 0, optimalRows - rows, 0, 0, Core.BORDER_CONSTANT);
+
+        // Convert to complex format for FFT
+        List<Mat> planes = new ArrayList<>();
+        planes.add(padded);
+        planes.add(Mat.zeros(padded.size(), CvType.CV_64F));
         Mat complexSignal = new Mat();
-        Core.dft(paddedSignal, complexSignal, Core.DFT_COMPLEX_OUTPUT);
+        Core.merge(planes, complexSignal);
+
+        // FFT
+        Core.dft(complexSignal, complexSignal);
 
         // Create bandpass filter
-        Mat filter = new Mat(complexSignal.rows(), 2, CvType.CV_64F, new Scalar(0));
-        double lowFreq = MIN_HR_BPM / 60.0; // 0.7 Hz
-        double highFreq = MAX_HR_BPM / 60.0; // 4.0 Hz
+        double lowCut = MIN_HR_BPM / 60.0 / fps;  // Minimum frequency
+        double highCut = MAX_HR_BPM / 60.0 / fps; // Maximum frequency
+        Mat filter = Mat.zeros(complexSignal.size(), CvType.CV_64F);
 
-        int lowBin = (int)Math.round(lowFreq * m / fps);
-        int highBin = (int)Math.round(highFreq * m / fps);
-
-        // Set passband
-        for (int i = lowBin; i <= highBin && i < filter.rows()/2; i++) {
-            filter.put(i, 0, 1.0);
-            filter.put(i, 1, 0.0);
-            if (i != 0) {
-                filter.put(filter.rows()-i, 0, 1.0);
-                filter.put(filter.rows()-i, 1, 0.0);
-            }
+        int halfRows = optimalRows / 2;
+        for (int i = 0; i < optimalRows; i++) {
+            double freq = (i <= halfRows) ? (double)i : (double)(optimalRows - i);
+            freq /= optimalRows;
+            double value = (freq >= lowCut && freq <= highCut) ? 1.0 : 0.0;
+            filter.put(i, 0, value, 0.0); // Real and imaginary parts
         }
 
-        // Apply filter
-        Core.mulSpectrums(complexSignal, filter, complexSignal, 0);
+        // Apply filter in frequency domain
+        Mat filteredSpectrum = new Mat();
+        Core.mulSpectrums(complexSignal, filter, filteredSpectrum, 0);
 
-        // Convert back to time domain
-        Mat filteredSignal = new Mat();
-        Core.idft(complexSignal, filteredSignal, Core.DFT_REAL_OUTPUT | Core.DFT_SCALE);
+        // Inverse FFT
+        Core.idft(filteredSpectrum, filteredSpectrum);
 
-        // Return only the original signal length
-        return filteredSignal.rowRange(0, signal.rows());
+        // Extract real part and crop to original size
+        Core.split(filteredSpectrum, planes);
+        Mat filteredSignal = planes.get(0).rowRange(0, rows);
+
+        return filteredSignal;
     }
 
     private List<Long> processHeartRateData(List<HeartRateData> heartRateData) {
