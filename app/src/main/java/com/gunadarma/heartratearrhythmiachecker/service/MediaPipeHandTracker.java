@@ -22,23 +22,26 @@ import org.opencv.core.Scalar;
 import org.opencv.imgproc.Imgproc;
 
 /**
- * MediaPipe-based hand tracker with proper initialization and fallback handling
+ * Enhanced MediaPipe-based hand tracker with improved performance and reliability
  */
 public class MediaPipeHandTracker {
     private static final String TAG = "MediaPipeHandTracker";
 
     private final Context context;
     private HandLandmarker handLandmarker;
-    private HandLandmarkerResult lastResult = null;
-    private LandmarkerListener handLandmarkerHelperListener = null;
     private boolean isInitialized = false;
     private long lastProcessedTimestamp = 0;
-    private final Float MIN_HAND_DETECTION_CONFIDENCE = 0.5f;
-    private final Float MIN_HAND_TRACKING_CONFIDENCE = 0.5f;
-    private final Float MIN_HAND_PRESENCE_CONFIDENCE = 0.5f;
-    private final Integer MAX_NUM_HANDS = 1;
-    private final RunningMode RUNNING_MODE = RunningMode.LIVE_STREAM;
 
+    // Optimized configuration for better performance
+    private final Float MIN_HAND_DETECTION_CONFIDENCE = 0.7f; // Increased for better accuracy
+    private final Float MIN_HAND_TRACKING_CONFIDENCE = 0.6f;  // Increased for stability
+    private final Float MIN_HAND_PRESENCE_CONFIDENCE = 0.6f;  // Increased for reliability
+    private final Integer MAX_NUM_HANDS = 1;
+    private final RunningMode RUNNING_MODE = RunningMode.IMAGE; // Changed to IMAGE mode for sync processing
+
+    // Performance tracking
+    private int consecutiveFailures = 0;
+    private static final int MAX_CONSECUTIVE_FAILURES = 5;
 
     public MediaPipeHandTracker(Context context) {
         this.context = context;
@@ -46,7 +49,7 @@ public class MediaPipeHandTracker {
     }
 
     /**
-     * Initialize MediaPipe HandLandmarker with proper configuration
+     * Initialize MediaPipe HandLandmarker with enhanced configuration for better performance
      */
     private void initializeMediaPipe() {
         if (isInitialized) return;
@@ -68,13 +71,6 @@ public class MediaPipeHandTracker {
               .setNumHands(MAX_NUM_HANDS)
               .setRunningMode(RUNNING_MODE);
 
-            // The ResultListener and ErrorListener only use for LIVE_STREAM mode.
-            if (RUNNING_MODE == RunningMode.LIVE_STREAM) {
-                optionBuilder
-                  .setResultListener(this::returnLivestreamResult)
-                  .setErrorListener(this::returnLivestreamError);
-            }
-
             this.handLandmarker = HandLandmarker.createFromOptions(context, optionBuilder.build());
             this.isInitialized = true;
             Log.i(TAG, "MediaPipe HandLandmarker initialized successfully");
@@ -84,48 +80,57 @@ public class MediaPipeHandTracker {
         }
     }
 
-    // Return the landmark result to this HandLandmarkerHelper's caller
-    private void returnLivestreamResult(HandLandmarkerResult result, MPImage input) {
-        // Cache the result for use in detectHand method
-        this.lastResult = result;
+    /**
+     * Fallback initialization with CPU delegate and lower thresholds
+     */
+    private void tryFallbackInitialization() {
+        try {
+            Log.i(TAG, "Attempting fallback initialization with CPU delegate");
 
-        long finishTimeMs = android.os.SystemClock.uptimeMillis();
-        long inferenceTime = finishTimeMs - result.timestampMs();
+            var baseOptions = BaseOptions.builder()
+                .setDelegate(Delegate.CPU)
+                .setModelAssetPath("hand_landmarker.task")
+                .build();
 
-        if (handLandmarkerHelperListener != null) {
-            handLandmarkerHelperListener.onResults(
-              new ResultBundle(
-                java.util.Collections.singletonList(result),
-                inferenceTime,
-                input.getHeight(),
-                input.getWidth()
-              )
-            );
+            var optionBuilder = HandLandmarker.HandLandmarkerOptions.builder()
+                .setBaseOptions(baseOptions)
+                .setMinHandDetectionConfidence(0.5f) // Lower threshold for fallback
+                .setMinTrackingConfidence(0.5f)
+                .setMinHandPresenceConfidence(0.5f)
+                .setNumHands(MAX_NUM_HANDS)
+                .setRunningMode(RUNNING_MODE);
+
+            this.handLandmarker = HandLandmarker.createFromOptions(context, optionBuilder.build());
+            this.isInitialized = true;
+            this.consecutiveFailures = 0;
+            Log.i(TAG, "Fallback MediaPipe HandLandmarker initialized successfully");
+
+        } catch (Exception e) {
+            Log.e(TAG, "Fallback initialization also failed", e);
+            this.isInitialized = false;
         }
     }
-
-    // Return errors thrown during detection to this HandLandmarkerHelper's caller
-    private void returnLivestreamError(RuntimeException error) {
-        if (handLandmarkerHelperListener != null) {
-            String message = (error.getMessage() != null) ? error.getMessage() : "An unknown error has occurred";
-            handLandmarkerHelperListener.onError(message, 500);
-        }
-    }
-
-
 
     /**
-     * Detect hand in the given frame and return hand detection result
-     * Uses LIVE_STREAM mode with async processing and cached results
+     * Enhanced hand detection with improved error handling and performance
      */
     public HandDetectionResult detectHand(Mat frame) {
         if (!isInitialized || handLandmarker == null) {
-            Log.w(TAG, "MediaPipe not initialized");
+            // Try to reinitialize if we've had too many failures
+            if (consecutiveFailures > MAX_CONSECUTIVE_FAILURES) {
+                Log.w(TAG, "Too many failures, attempting reinitialization");
+                initializeMediaPipe();
+            }
             return null;
         }
 
         try {
-            // Convert OpenCV Mat to Bitmap
+            // Convert OpenCV Mat to Bitmap with error checking
+            if (frame.empty() || frame.cols() == 0 || frame.rows() == 0) {
+                Log.w(TAG, "Invalid frame dimensions");
+                return null;
+            }
+
             Bitmap bitmap = Bitmap.createBitmap(frame.cols(), frame.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(frame, bitmap);
 
@@ -133,118 +138,202 @@ public class MediaPipeHandTracker {
             MPImage image = new BitmapImageBuilder(bitmap).build();
             long timestamp = System.currentTimeMillis();
 
-            // Only process if enough time has passed to avoid overwhelming the detector
-            if (timestamp - lastProcessedTimestamp > 33) { // ~30 FPS max
-                handLandmarker.detectAsync(image, timestamp);
-                lastProcessedTimestamp = timestamp;
-            }
+            // Process synchronously for more reliable results
+            HandLandmarkerResult result = handLandmarker.detect(image);
 
-            // Return result from the last successful detection (from the listener)
-            if (lastResult != null && lastResult.landmarks() != null && !lastResult.landmarks().isEmpty()) {
-                // Get the first hand landmarks
-                var handLandmarks = lastResult.landmarks().get(0);
+            if (result != null && result.landmarks() != null && !result.landmarks().isEmpty()) {
+                // Reset failure counter on success
+                consecutiveFailures = 0;
 
-                // Calculate bounding box from landmarks
-                float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE;
-                float maxX = Float.MIN_VALUE, maxY = Float.MIN_VALUE;
+                // Get the first (and best) hand landmarks
+                var handLandmarks = result.landmarks().get(0);
 
-                for (var landmark : handLandmarks) {
-                    float x = landmark.x() * frame.cols();
-                    float y = landmark.y() * frame.rows();
-
-                    minX = Math.min(minX, x);
-                    maxX = Math.max(maxX, x);
-                    minY = Math.min(minY, y);
-                    maxY = Math.max(maxY, y);
+                // Validate landmarks quality
+                if (handLandmarks.size() < 21) {
+                    Log.w(TAG, "Incomplete hand landmarks detected: " + handLandmarks.size());
+                    return null;
                 }
 
-                // Add padding to bounding box
-                int padding = 20;
-                int rectX = Math.max(0, (int)(minX - padding));
-                int rectY = Math.max(0, (int)(minY - padding));
-                int width = Math.min((int)(maxX - minX + 2 * padding), frame.cols() - rectX);
-                int height = Math.min((int)(maxY - minY + 2 * padding), frame.rows() - rectY);
+                // Calculate enhanced bounding box from landmarks
+                Rect boundingRect = calculateEnhancedBoundingBox(handLandmarks, frame);
+                if (boundingRect == null) {
+                    return null;
+                }
 
-                Rect boundingRect = new Rect(rectX, rectY, width, height);
+                // Extract ROI safely
+                Mat roi = extractSafeROI(frame, boundingRect);
+                if (roi == null) {
+                    return null;
+                }
 
-                // Extract ROI
-                Mat roi = new Mat(frame, boundingRect);
+                // Calculate optimized palm ROI
+                Rect palmROI = calculateOptimizedPalmROI(handLandmarks, frame, boundingRect);
 
-                // Calculate palm ROI
-                Rect palmROI = calculatePalmROI(handLandmarks, frame, boundingRect);
+                Log.d(TAG, String.format("Hand detected: bounds(%d,%d,%d,%d), palm(%s)",
+                    boundingRect.x, boundingRect.y, boundingRect.width, boundingRect.height,
+                    palmROI != null ? String.format("%d,%d,%d,%d", palmROI.x, palmROI.y, palmROI.width, palmROI.height) : "null"));
 
-                Log.d(TAG, "Hand detected using MediaPipe");
                 return new HandDetectionResult(boundingRect, roi, palmROI, handLandmarks);
+            } else {
+                consecutiveFailures++;
+                if (consecutiveFailures % 10 == 0) {
+                    Log.w(TAG, "No hand detected for " + consecutiveFailures + " consecutive frames");
+                }
             }
 
         } catch (Exception e) {
-            Log.e(TAG, "Error in hand detection", e);
+            consecutiveFailures++;
+            Log.e(TAG, "Error in enhanced hand detection (failures: " + consecutiveFailures + ")", e);
+
+            // Reinitialize if too many failures
+            if (consecutiveFailures > MAX_CONSECUTIVE_FAILURES) {
+                Log.w(TAG, "Reinitializing due to consecutive failures");
+                isInitialized = false;
+                initializeMediaPipe();
+            }
         }
 
         return null;
     }
 
     /**
-     * Calculate palm region of interest based on hand landmarks
+     * Calculate enhanced bounding box with better landmark analysis
      */
-    private Rect calculatePalmROI(java.util.List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark> handLandmarks,
-                                   Mat frame, Rect handBounds) {
+    private Rect calculateEnhancedBoundingBox(java.util.List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark> handLandmarks, Mat frame) {
         try {
-            // Palm landmarks: wrist (0), thumb base (1), index base (5), middle base (9), ring base (13), pinky base (17)
-            int[] palmLandmarkIndices = {0, 1, 5, 9, 13, 17};
-
             float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE;
             float maxX = Float.MIN_VALUE, maxY = Float.MIN_VALUE;
 
-            for (int index : palmLandmarkIndices) {
-                if (index < handLandmarks.size()) {
-                    var landmark = handLandmarks.get(index);
-                    float x = landmark.x() * frame.cols();
-                    float y = landmark.y() * frame.rows();
+            // Analyze all landmarks for robust bounding box
+            for (var landmark : handLandmarks) {
+                float x = landmark.x() * frame.cols();
+                float y = landmark.y() * frame.rows();
 
-                    minX = Math.min(minX, x);
-                    maxX = Math.max(maxX, x);
-                    minY = Math.min(minY, y);
-                    maxY = Math.max(maxY, y);
-                }
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y);
             }
 
-            // Create palm ROI with padding
-            int palmPadding = 10;
-            int palmX = Math.max(handBounds.x, (int)(minX - palmPadding));
-            int palmY = Math.max(handBounds.y, (int)(minY - palmPadding));
-            int palmWidth = Math.min((int)(maxX - minX + 2 * palmPadding),
-                                   handBounds.x + handBounds.width - palmX);
-            int palmHeight = Math.min((int)(maxY - minY + 2 * palmPadding),
-                                    handBounds.y + handBounds.height - palmY);
+            // Add adaptive padding based on hand size
+            float handWidth = maxX - minX;
+            float handHeight = maxY - minY;
+            int paddingX = (int)(handWidth * 0.15); // 15% padding
+            int paddingY = (int)(handHeight * 0.15);
 
-            return new Rect(palmX, palmY, palmWidth, palmHeight);
+            int rectX = Math.max(0, (int)(minX - paddingX));
+            int rectY = Math.max(0, (int)(minY - paddingY));
+            int width = Math.min((int)(maxX - minX + 2 * paddingX), frame.cols() - rectX);
+            int height = Math.min((int)(maxY - minY + 2 * paddingY), frame.rows() - rectY);
+
+            // Validate bounding box
+            if (width < 50 || height < 50 || width > frame.cols() * 0.8 || height > frame.rows() * 0.8) {
+                Log.w(TAG, "Invalid bounding box dimensions: " + width + "x" + height);
+                return null;
+            }
+
+            return new Rect(rectX, rectY, width, height);
 
         } catch (Exception e) {
-            Log.w(TAG, "Could not calculate palm ROI, using fallback", e);
-            return createFallbackPalmROI(handLandmarks, frame);
+            Log.e(TAG, "Error calculating enhanced bounding box", e);
+            return null;
         }
     }
 
     /**
-     * Create a fallback palm ROI using the center of the hand
+     * Extract ROI safely with bounds checking
+     */
+    private Mat extractSafeROI(Mat frame, Rect boundingRect) {
+        try {
+            // Ensure bounding rect is within frame bounds
+            int x = Math.max(0, Math.min(boundingRect.x, frame.cols() - 1));
+            int y = Math.max(0, Math.min(boundingRect.y, frame.rows() - 1));
+            int width = Math.min(boundingRect.width, frame.cols() - x);
+            int height = Math.min(boundingRect.height, frame.rows() - y);
+
+            if (width <= 0 || height <= 0) {
+                Log.w(TAG, "Invalid ROI dimensions after bounds checking");
+                return null;
+            }
+
+            Rect safeRect = new Rect(x, y, width, height);
+            return new Mat(frame, safeRect);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error extracting safe ROI", e);
+            return null;
+        }
+    }
+
+    /**
+     * Calculate optimized palm ROI using key landmarks
+     */
+    private Rect calculateOptimizedPalmROI(java.util.List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark> handLandmarks,
+                                          Mat frame, Rect handBounds) {
+        try {
+            // Use specific palm landmarks for better accuracy
+            // Wrist (0), Thumb CMC (1), Index MCP (5), Middle MCP (9), Ring MCP (13), Pinky MCP (17)
+            int[] palmIndices = {0, 1, 5, 9, 13, 17};
+
+            float palmCenterX = 0, palmCenterY = 0;
+            int validLandmarks = 0;
+
+            for (int index : palmIndices) {
+                if (index < handLandmarks.size()) {
+                    var landmark = handLandmarks.get(index);
+                    palmCenterX += landmark.x() * frame.cols();
+                    palmCenterY += landmark.y() * frame.rows();
+                    validLandmarks++;
+                }
+            }
+
+            if (validLandmarks == 0) {
+                return createFallbackPalmROI(handLandmarks, frame, handBounds);
+            }
+
+            palmCenterX /= validLandmarks;
+            palmCenterY /= validLandmarks;
+
+            // Calculate palm size based on hand dimensions
+            int palmSize = Math.min(handBounds.width, handBounds.height) / 2;
+            palmSize = Math.max(60, Math.min(palmSize, 120)); // Clamp between 60-120 pixels
+
+            int palmX = Math.max(handBounds.x, (int)(palmCenterX - palmSize / 2));
+            int palmY = Math.max(handBounds.y, (int)(palmCenterY - palmSize / 2));
+            int palmWidth = Math.min(palmSize, handBounds.x + handBounds.width - palmX);
+            int palmHeight = Math.min(palmSize, handBounds.y + handBounds.height - palmY);
+
+            // Validate palm ROI
+            if (palmWidth < 40 || palmHeight < 40) {
+                return createFallbackPalmROI(handLandmarks, frame, handBounds);
+            }
+
+            return new Rect(palmX, palmY, palmWidth, palmHeight);
+
+        } catch (Exception e) {
+            Log.w(TAG, "Error calculating optimized palm ROI, using fallback", e);
+            return createFallbackPalmROI(handLandmarks, frame, handBounds);
+        }
+    }
+
+    /**
+     * Create a reliable fallback palm ROI
      */
     private Rect createFallbackPalmROI(java.util.List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark> handLandmarks,
-                                      Mat frame) {
+                                      Mat frame, Rect handBounds) {
         try {
-            // Use wrist and middle finger base to estimate palm center
-            var wrist = handLandmarks.get(0);
-            var middleBase = handLandmarks.get(9);
+            // Use center of hand bounds as fallback
+            int centerX = handBounds.x + handBounds.width / 2;
+            int centerY = handBounds.y + handBounds.height / 2;
 
-            float centerX = (wrist.x() + middleBase.x()) / 2.0f * frame.cols();
-            float centerY = (wrist.y() + middleBase.y()) / 2.0f * frame.rows();
+            // Create square ROI around center
+            int roiSize = Math.min(handBounds.width, handBounds.height) / 3;
+            roiSize = Math.max(50, Math.min(roiSize, 100)); // Clamp size
 
-            // Create a square ROI around the center
-            int roiSize = 80;
-            int palmX = Math.max(0, (int)(centerX - roiSize/2));
-            int palmY = Math.max(0, (int)(centerY - roiSize/2));
-            int palmWidth = Math.min(roiSize, frame.cols() - palmX);
-            int palmHeight = Math.min(roiSize, frame.rows() - palmY);
+            int palmX = Math.max(handBounds.x, centerX - roiSize / 2);
+            int palmY = Math.max(handBounds.y, centerY - roiSize / 2);
+            int palmWidth = Math.min(roiSize, handBounds.x + handBounds.width - palmX);
+            int palmHeight = Math.min(roiSize, handBounds.y + handBounds.height - palmY);
 
             return new Rect(palmX, palmY, palmWidth, palmHeight);
 
@@ -255,72 +344,68 @@ public class MediaPipeHandTracker {
     }
 
     /**
-     * Draw hand landmarks and bounding boxes on the frame
+     * Draw enhanced hand annotations with performance indicators
      */
     public void drawHandAnnotations(Mat frame, HandDetectionResult result) {
         if (result == null) return;
 
         try {
-            // Draw hand bounding box (green)
-            Imgproc.rectangle(frame, result.boundingRect, new Scalar(0, 255, 0), 3);
-            Imgproc.putText(frame, "Hand (MediaPipe)",
-                new Point(result.boundingRect.x, result.boundingRect.y - 10),
-                Imgproc.FONT_HERSHEY_SIMPLEX, 0.7, new Scalar(0, 255, 0), 2);
+            // Draw hand bounding box with status color
+            Scalar handColor = consecutiveFailures == 0 ? new Scalar(0, 255, 0) : new Scalar(0, 165, 255);
+            Imgproc.rectangle(frame, result.boundingRect, handColor, 3);
 
-            // Draw palm ROI (red)
+            String handLabel = String.format("Hand (MP) - F:%d", consecutiveFailures);
+            Imgproc.putText(frame, handLabel,
+                new Point(result.boundingRect.x, result.boundingRect.y - 10),
+                Imgproc.FONT_HERSHEY_SIMPLEX, 0.6, handColor, 2);
+
+            // Draw palm ROI with enhanced styling
             if (result.palmROI != null) {
                 Imgproc.rectangle(frame, result.palmROI, new Scalar(0, 0, 255), 2);
-                Imgproc.putText(frame, "Palm ROI",
+
+                String palmLabel = String.format("Palm %dx%d", result.palmROI.width, result.palmROI.height);
+                Imgproc.putText(frame, palmLabel,
                     new Point(result.palmROI.x, result.palmROI.y - 10),
-                    Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, new Scalar(0, 0, 255), 2);
+                    Imgproc.FONT_HERSHEY_SIMPLEX, 0.4, new Scalar(0, 0, 255), 1);
             }
 
-            // Draw hand landmarks if available
+            // Draw key landmarks only (to reduce visual clutter)
             if (result.handLandmarks != null) {
-                drawHandLandmarks(frame, result.handLandmarks);
+                drawKeyLandmarks(frame, result.handLandmarks);
             }
 
         } catch (Exception e) {
-            Log.w(TAG, "Error drawing hand annotations", e);
+            Log.w(TAG, "Error drawing enhanced hand annotations", e);
         }
     }
 
     /**
-     * Draw individual hand landmarks
+     * Draw only key landmarks for better performance and visibility
      */
-    private void drawHandLandmarks(Mat frame, java.util.List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark> landmarks) {
+    private void drawKeyLandmarks(Mat frame, java.util.List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark> landmarks) {
         try {
-            // Draw landmarks as small circles
-            for (int i = 0; i < landmarks.size(); i++) {
-                var landmark = landmarks.get(i);
-                int x = (int)(landmark.x() * frame.cols());
-                int y = (int)(landmark.y() * frame.rows());
+            // Draw only key landmarks: wrist, fingertips, and palm base points
+            int[] keyIndices = {0, 4, 8, 12, 16, 20, 1, 5, 9, 13, 17}; // Wrist, fingertips, palm bases
 
-                // Different colors for different types of landmarks
-                Scalar color;
-                if (i == 0) {
-                    color = new Scalar(255, 0, 0); // Wrist - red
-                } else if (i <= 4) {
-                    color = new Scalar(255, 255, 0); // Thumb - yellow
-                } else if (i <= 8) {
-                    color = new Scalar(0, 255, 255); // Index - cyan
-                } else if (i <= 12) {
-                    color = new Scalar(255, 0, 255); // Middle - magenta
-                } else if (i <= 16) {
-                    color = new Scalar(0, 255, 0); // Ring - green
-                } else {
-                    color = new Scalar(0, 0, 255); // Pinky - blue
+            for (int i : keyIndices) {
+                if (i < landmarks.size()) {
+                    var landmark = landmarks.get(i);
+                    int x = (int)(landmark.x() * frame.cols());
+                    int y = (int)(landmark.y() * frame.rows());
+
+                    Scalar color = (i == 0) ? new Scalar(255, 0, 0) : new Scalar(0, 255, 255);
+                    int radius = (i == 0) ? 5 : 3;
+
+                    Imgproc.circle(frame, new Point(x, y), radius, color, -1);
                 }
-
-                Imgproc.circle(frame, new Point(x, y), 3, color, -1);
             }
         } catch (Exception e) {
-            Log.w(TAG, "Error drawing landmarks", e);
+            Log.w(TAG, "Error drawing key landmarks", e);
         }
     }
 
     /**
-     * Release MediaPipe resources
+     * Release MediaPipe resources with proper cleanup
      */
     public void release() {
         try {
@@ -329,10 +414,18 @@ public class MediaPipeHandTracker {
                 handLandmarker = null;
             }
             isInitialized = false;
-            Log.i(TAG, "MediaPipe HandLandmarker released");
+            consecutiveFailures = 0;
+            Log.i(TAG, "Enhanced MediaPipe HandLandmarker released");
         } catch (Exception e) {
             Log.e(TAG, "Error releasing MediaPipe resources", e);
         }
+    }
+
+    /**
+     * Get current performance status
+     */
+    public boolean isPerformingWell() {
+        return consecutiveFailures < MAX_CONSECUTIVE_FAILURES / 2;
     }
 
     /**
@@ -351,27 +444,5 @@ public class MediaPipeHandTracker {
             this.palmROI = palmROI;
             this.handLandmarks = handLandmarks;
         }
-    }
-
-
-    public class ResultBundle {
-        public final java.util.List<HandLandmarkerResult> results;
-        public final long inferenceTime;
-        public final int inputImageHeight;
-        public final int inputImageWidth;
-
-        public ResultBundle(java.util.List<HandLandmarkerResult> results, long inferenceTime, int inputImageHeight, int inputImageWidth) {
-            this.results = results;
-            this.inferenceTime = inferenceTime;
-            this.inputImageHeight = inputImageHeight;
-            this.inputImageWidth = inputImageWidth;
-        }
-    }
-
-    public interface LandmarkerListener {
-        int OTHER_ERROR = -1; // Define a default error code
-
-        void onError(String error, int errorCode);
-        void onResults(ResultBundle resultBundle);
     }
 }

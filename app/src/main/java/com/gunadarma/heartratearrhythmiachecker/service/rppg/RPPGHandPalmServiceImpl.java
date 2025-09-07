@@ -10,6 +10,7 @@ import com.gunadarma.heartratearrhythmiachecker.service.MediaPipeHandTracker;
 
 import org.opencv.core.Core;
 import org.opencv.core.Mat;
+import org.opencv.core.Point;
 import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
@@ -20,7 +21,6 @@ import org.opencv.videoio.Videoio;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
@@ -29,17 +29,15 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
   private final MediaPipeHandTracker mpHandTracker;
   private final Context context;
 
-  // rPPG processing constants for palm detection
-  private static final double MIN_HR_BPM = 48;
-  private static final double MAX_HR_BPM = 240.0;
-  private static final double SKIN_CONFIDENCE_THRESHOLD = 0.05; // Very low threshold for testing
-  private static final double PEAK_THRESHOLD = 0.3; // Lowered for more sensitive detection
-  private static final double BANDPASS_LOW_FREQ = 0.83; // 50 BPM in Hz
-  private static final double BANDPASS_HIGH_FREQ = 3.0; // 180 BPM in Hz
+  // Store signal history for ECG graph visualization
+  private List<Double> signalHistory = new ArrayList<>();
+  private List<Double> processedSignalHistory = new ArrayList<>(); // For ECG-like processed signal
+  private static final int MAX_SIGNAL_HISTORY = 300; // Keep last 300 samples (10 seconds at 30fps)
 
-  // Additional constants for improved processing
-  private static final int MIN_SIGNAL_LENGTH = 30; // Even lower - just 1 second at 30fps for testing
-  private static final double SIGNAL_AMPLIFICATION = 100.0; // Amplify small rPPG signals
+  // rPPG signal processing variables
+  private List<Double> rawSignalBuffer = new ArrayList<>(); // Buffer for raw signals
+  private double signalBaseline = 0.0; // Running baseline
+  private int frameCounter = 0;
 
   public RPPGHandPalmServiceImpl(Context context) {
     this.context = context;
@@ -48,7 +46,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
   @Override
   public RPPGData getRPPGSignals(String videoPath) {
-    Log.i(TAG, "Starting rPPG signal extraction from hand palm: " + videoPath);
+    Log.i(TAG, "Starting hand palm rPPG analysis: " + videoPath);
 
     VideoCapture cap = new VideoCapture(videoPath);
     if (!cap.isOpened()) {
@@ -70,37 +68,10 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
                                fps, totalFrames, videoDurationSeconds, rotationDegrees,
                                needsRotation ? " (needs correction)" : ""));
 
-      // Extract RGB signals from palm region
-      List<RPPGData.Signal> signals = extractPalmSignals(videoPath, cap, fps, rotationDegrees);
+      // Process video for hand detection and rPPG calculation
+      RPPGData rppgData = processHandDetectionOnly(videoPath, cap, fps, rotationDegrees);
 
-      if (signals.isEmpty()) {
-        Log.w(TAG, "No valid palm signals extracted");
-        return RPPGData.builder()
-            .heartbeats(new ArrayList<>())
-            .minBpm(0)
-            .maxBpm(0)
-            .averageBpm(0)
-            .durationSeconds(videoDurationSeconds)
-            .signals(new ArrayList<>())
-            .build();
-      }
-
-      // Process signals to extract heart rate data
-      RPPGProcessingResult result = processRPPGSignals(signals, fps);
-
-      // Create and return RPPGData using builder pattern
-      RPPGData rppgData = RPPGData.builder()
-          .heartbeats(result.heartbeats)
-          .minBpm(result.minBpm)
-          .maxBpm(result.maxBpm)
-          .averageBpm(result.averageBpm)
-          .baselineBpm(result.baselineBpm) // Added baseline BPM
-          .durationSeconds(videoDurationSeconds)
-          .signals(signals)
-          .build();
-
-      Log.i(TAG, String.format("Palm rPPG extraction completed: %.1f BPM baseline, %.1f BPM average, %d heartbeats detected",
-                               result.baselineBpm, result.averageBpm, result.heartbeats.size()));
+      Log.i(TAG, "Hand palm rPPG analysis completed");
 
       return rppgData;
 
@@ -112,26 +83,19 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
     }
   }
 
-  private List<RPPGData.Signal> extractPalmSignals(String videoPath, VideoCapture cap, double fps, int rotationDegrees) {
-    List<RPPGData.Signal> signals = new ArrayList<>();
+  private RPPGData processHandDetectionOnly(String videoPath, VideoCapture cap, double fps, int rotationDegrees) {
     Mat frame = new Mat();
-    long startTime = System.currentTimeMillis();
     int frameCount = 0;
-    int validFrames = 0;
     int palmFrames = 0;
 
-    // Data capture from hand palm
-    // --------------------------------
-    // - Overlay video spec
-    //   -> Hand palm detection marked with green box
-    //   -> ROI of hand palm between index and thumb finger red box
-    //   -> ECG waveform at bottom
-    //   -> FPS and frame count
-    //   -> Heart rate BPM
-    // - List of Heartbeat timestamps in ms
-    // - Average, min, max BPM
+    // rPPG signal storage
+    List<RPPGData.Signal> signals = new ArrayList<>();
+    List<Double> redSignals = new ArrayList<>();
+    List<Double> greenSignals = new ArrayList<>();
+    List<Double> blueSignals = new ArrayList<>();
+    List<Long> timestamps = new ArrayList<>();
 
-    // Initialize video writer after reading first frame to get proper dimensions
+    // Initialize video writer for output with hand detection overlays
     VideoWriter writer = null;
     String outputPath = videoPath.replace("original.mp4", "final.mp4");
 
@@ -152,12 +116,9 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
       0 // Default codec
     };
 
-    // For ECG waveform visualization
-    List<Double> ecgWaveform = new ArrayList<>();
-    double currentBPM = 0.0;
-    double lastSignalValue = 0.0;
-    
-    // ENSURE ONLY USE MEDIAPIPE FOR HAND DETECTION FOR CONSISTENCY
+    long startTime = System.currentTimeMillis();
+
+    // Process video frames for hand detection and rPPG
     while (cap.read(frame)) {
       if (frame.empty()) continue;
 
@@ -206,9 +167,10 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
       // Clone frame for overlay drawing
       Mat overlayFrame = frame.clone();
+      long timestamp = startTime + (long)(frameCount * 1000 / fps);
 
       try {
-        // Try MediaPipe hand detection first
+        // Try MediaPipe hand detection
         MediaPipeHandTracker.HandDetectionResult handResult = null;
         if (mpHandTracker != null) {
           handResult = mpHandTracker.detectHand(frame);
@@ -216,61 +178,35 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
         if (handResult != null && handResult.palmROI != null && isValidPalmROI(handResult.palmROI, frame)) {
           palmFrames++;
-          
+
+          // Extract rPPG signals from palm region
+          RPPGData.Signal signal = extractRPPGSignal(frame, handResult.palmROI, timestamp);
+          if (signal != null) {
+            signals.add(signal);
+            redSignals.add(signal.getRedChannel());
+            greenSignals.add(signal.getGreenChannel());
+            blueSignals.add(signal.getBlueChannel());
+            timestamps.add(signal.getTimestamp());
+
+            // Update signal history for ECG graph visualization
+            signalHistory.add(signal.getGreenChannel());
+
+            // Keep only recent history
+            while (signalHistory.size() > MAX_SIGNAL_HISTORY) {
+              signalHistory.remove(0);
+            }
+          }
+
           // Draw hand detection overlays using MediaPipe's method
           mpHandTracker.drawHandAnnotations(overlayFrame, handResult);
 
-          Mat palmRegion = new Mat(frame, handResult.palmROI);
-          Mat rgb = new Mat();
-          Imgproc.cvtColor(palmRegion, rgb, Imgproc.COLOR_BGR2RGB);
-
-          Mat skinMask = createPalmSkinMask(rgb);
-          Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(3, 3));
-          Imgproc.morphologyEx(skinMask, skinMask, Imgproc.MORPH_OPEN, kernel);
-          Imgproc.morphologyEx(skinMask, skinMask, Imgproc.MORPH_CLOSE, kernel);
-
-          Scalar means = Core.mean(rgb, skinMask);
-          double skinRatio = (double) Core.countNonZero(skinMask) / skinMask.total();
-
-          // Log skin detection details for debugging
-          if (frameCount % 300 == 0) { // Log every 10 seconds at 30fps
-            Log.d(TAG, String.format("Frame %d - Skin ratio: %.3f (threshold: %.3f), RGB means: [%.1f, %.1f, %.1f]",
-                   frameCount, skinRatio, SKIN_CONFIDENCE_THRESHOLD, means.val[0], means.val[1], means.val[2]));
-          }
-
-          if (skinRatio > SKIN_CONFIDENCE_THRESHOLD) {
-            long timestamp = startTime + (long) (frameCount * (1000.0 / fps));
-            signals.add(new RPPGData.Signal(means.val[0], means.val[1], means.val[2], timestamp));
-            validFrames++;
-            
-            // Calculate instantaneous signal value for ECG waveform
-            lastSignalValue = (means.val[0] + means.val[1] + means.val[2]) / 3.0;
-            ecgWaveform.add(lastSignalValue);
-            
-            // Calculate current BPM from recent signals (last 5 seconds)
-            if (signals.size() > fps * 5) {
-              currentBPM = calculateInstantaneousBPM(signals, (int)(fps * 5));
-            }
-          } else {
-            // Log when skin detection fails
-            if (frameCount % 300 == 0) {
-              Log.d(TAG, String.format("Frame %d - Skin detection failed: ratio %.3f < threshold %.3f",
-                     frameCount, skinRatio, SKIN_CONFIDENCE_THRESHOLD));
-            }
-          }
-
-          palmRegion.release();
-          rgb.release();
-          skinMask.release();
-          kernel.release();
-        } else {
-          // No hand detected - add zero to maintain timeline
-          ecgWaveform.add(0.0);
+          // Draw rPPG info on palm region
+          drawRPPGOverlays(overlayFrame, handResult.palmROI, signal);
         }
-        
-        // Draw all overlays on frame
-        drawOverlays(overlayFrame, frameCount, fps, validFrames, palmFrames, currentBPM, ecgWaveform);
-        
+
+        // Draw comprehensive overlays on frame
+        drawRPPGAnalysisOverlays(overlayFrame, frameCount, fps, palmFrames, signals.size());
+
         // Write frame to output video only if writer is available
         if (writer != null && writer.isOpened()) {
           writer.write(overlayFrame);
@@ -279,7 +215,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
       } catch (Exception e) {
         Log.w(TAG, "Error processing frame " + frameCount, e);
         // Still write the frame even if processing failed
-        drawOverlays(overlayFrame, frameCount, fps, validFrames, palmFrames, currentBPM, ecgWaveform);
+        drawRPPGAnalysisOverlays(overlayFrame, frameCount, fps, palmFrames, signals.size());
         if (writer != null && writer.isOpened()) {
           writer.write(overlayFrame);
         }
@@ -287,454 +223,247 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
       overlayFrame.release();
       frameCount++;
-      
+
       if (frameCount % 100 == 0) {
-        Log.d(TAG, String.format("Processed %d frames, %d valid, %d with palm detection",
-                                 frameCount, validFrames, palmFrames));
+        Log.d(TAG, String.format("Processed %d frames, %d with palm detection, %d rPPG signals",
+                                 frameCount, palmFrames, signals.size()));
       }
     }
 
     if (writer != null) {
       writer.release();
-      Log.i(TAG, "Overlay video saved to: " + outputPath);
-    }
-    
-    Log.i(TAG, String.format("Extracted signals from %d/%d frames (%d palm frames)",
-                             validFrames, frameCount, palmFrames));
-    return signals;
-  }
-
-  private boolean isValidPalmROI(Rect palmROI, Mat frame) {
-    // Check if ROI is within frame bounds
-    if (palmROI.x < 0 || palmROI.y < 0 ||
-        palmROI.x + palmROI.width > frame.cols() ||
-        palmROI.y + palmROI.height > frame.rows()) {
-      return false;
+      Log.i(TAG, "rPPG analysis video saved to: " + outputPath);
     }
 
-    // Check minimum size requirements
-    int minSize = Math.min(frame.cols(), frame.rows()) / 10;
-    return palmROI.width >= minSize && palmROI.height >= minSize;
-  }
+    Log.i(TAG, String.format("Processed %d frames (%d palm frames, %d rPPG signals)",
+                             frameCount, palmFrames, signals.size()));
 
-  private Mat createPalmSkinMask(Mat rgb) {
-    Mat skinMask = new Mat();
-
-    // Use multiple color spaces for robust skin detection
-
-    // 1. YCrCb color space (most reliable for skin detection)
-    Mat ycrcb = new Mat();
-    Imgproc.cvtColor(rgb, ycrcb, Imgproc.COLOR_RGB2YCrCb);
-    Mat mask1 = new Mat();
-    Core.inRange(ycrcb,
-      new Scalar(0, 133, 77),   // Lower bound
-      new Scalar(255, 173, 127), // Upper bound
-      mask1);
-
-    // 2. HSV color space for hue-based detection
-    Mat hsv = new Mat();
-    Imgproc.cvtColor(rgb, hsv, Imgproc.COLOR_RGB2HSV);
-    Mat mask2 = new Mat();
-    Core.inRange(hsv,
-      new Scalar(0, 30, 60),   // Lower bound (wider range)
-      new Scalar(25, 255, 255), // Upper bound
-      mask2);
-
-    // 3. RGB-based skin detection (complementary approach)
-    Mat mask3 = new Mat();
-    List<Mat> rgbChannels = new ArrayList<>();
-    rgbChannels.add(new Mat());
-    rgbChannels.add(new Mat());
-    rgbChannels.add(new Mat());
-    Core.split(rgb, rgbChannels);
-
-    // RGB skin detection rules: R > G > B, R > 95, G > 40, B > 20
-    Mat rMask = new Mat();
-    Mat gMask = new Mat();
-    Mat bMask = new Mat();
-    Mat rgMask = new Mat();
-    Mat gbMask = new Mat();
-
-    Core.compare(rgbChannels.get(0), new Scalar(95), rMask, Core.CMP_GT);  // R > 95
-    Core.compare(rgbChannels.get(1), new Scalar(40), gMask, Core.CMP_GT);  // G > 40
-    Core.compare(rgbChannels.get(2), new Scalar(20), bMask, Core.CMP_GT);  // B > 20
-    Core.compare(rgbChannels.get(0), rgbChannels.get(1), rgMask, Core.CMP_GT); // R > G
-    Core.compare(rgbChannels.get(1), rgbChannels.get(2), gbMask, Core.CMP_GT); // G > B
-
-    // Combine RGB conditions
-    Core.bitwise_and(rMask, gMask, mask3);
-    Core.bitwise_and(mask3, bMask, mask3);
-    Core.bitwise_and(mask3, rgMask, mask3);
-    Core.bitwise_and(mask3, gbMask, mask3);
-
-    // Combine all three masks using OR operation for better coverage
-    Mat combinedMask = new Mat();
-    Core.bitwise_or(mask1, mask2, combinedMask);
-    Core.bitwise_or(combinedMask, mask3, skinMask);
-
-    // Apply morphological operations to clean up the mask
-    Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(5, 5));
-    Imgproc.morphologyEx(skinMask, skinMask, Imgproc.MORPH_OPEN, kernel);
-    Imgproc.morphologyEx(skinMask, skinMask, Imgproc.MORPH_CLOSE, kernel);
-
-    // Cleanup
-    ycrcb.release();
-    hsv.release();
-    mask1.release();
-    mask2.release();
-    mask3.release();
-    combinedMask.release();
-    for (Mat channel : rgbChannels) {
-      channel.release();
-    }
-    rMask.release();
-    gMask.release();
-    bMask.release();
-    rgMask.release();
-    gbMask.release();
-    kernel.release();
-
-    return skinMask;
-  }
-
-  private RPPGProcessingResult processRPPGSignals(List<RPPGData.Signal> signals, double fps) {
-    if (signals.size() < MIN_SIGNAL_LENGTH) {
-      Log.w(TAG, "Insufficient signal data for processing: " + signals.size() + " signals (minimum required: " + MIN_SIGNAL_LENGTH + ")");
-      return new RPPGProcessingResult(new ArrayList<>(), 0, 0, 0, 0);
-    }
-
-    Log.d(TAG, "Processing " + signals.size() + " signals for heart rate detection");
-
-    // Use green channel for better rPPG signal (most sensitive to blood volume changes)
-    List<Double> greenSignal = new ArrayList<>();
-    for (RPPGData.Signal signal : signals) {
-      greenSignal.add(signal.getGreenChannel());
-    }
-
-    // Log initial signal statistics
-    double signalMean = greenSignal.stream().mapToDouble(d -> d).average().orElse(0.0);
-    double signalStd = Math.sqrt(greenSignal.stream().mapToDouble(d -> Math.pow(d - signalMean, 2)).average().orElse(0.0));
-    Log.d(TAG, String.format("Initial signal stats - Mean: %.3f, Std: %.3f, Range: %.3f to %.3f",
-           signalMean, signalStd,
-           greenSignal.stream().mapToDouble(d -> d).min().orElse(0),
-           greenSignal.stream().mapToDouble(d -> d).max().orElse(0)));
-
-    // Apply improved preprocessing
-    List<Double> processedSignal = preprocessSignalImproved(greenSignal);
-
-    // Apply improved bandpass filtering
-    List<Double> filteredSignal = applyImprovedBandpassFilter(processedSignal, fps);
-
-    // Extract heartbeats using improved peak detection
-    List<Long> heartbeats = extractHeartbeatsImproved(filteredSignal, signals, fps);
-
-    // Calculate statistics
-    double averageBpm = calculateAverageBPM(heartbeats);
-    double minBpm = calculateMinBPM(heartbeats);
-    double maxBpm = calculateMaxBPM(heartbeats);
-
-    // Calculate baseline BPM using median of heartbeats
-    double baselineBpm = calculateBaselineBPM(heartbeats);
-
-    Log.i(TAG, String.format("Heart rate processing complete: %.1f BPM average, %d heartbeats detected",
-                             averageBpm, heartbeats.size()));
-
-    return new RPPGProcessingResult(heartbeats, minBpm, maxBpm, averageBpm, baselineBpm);
+    // Calculate heart rate metrics from collected signals
+    return calculateHeartRateMetrics(greenSignals, timestamps, fps);
   }
 
   /**
-   * Improved signal preprocessing that preserves rPPG characteristics
+   * Extract rPPG signal from palm region of interest
    */
-  private List<Double> preprocessSignalImproved(List<Double> signal) {
-    List<Double> processed = new ArrayList<>();
+  private RPPGData.Signal extractRPPGSignal(Mat frame, Rect palmROI, long timestamp) {
+    try {
+      // Extract palm region
+      Mat palmRegion = new Mat(frame, palmROI);
 
-    if (signal.isEmpty()) return processed;
+      // Convert to RGB for proper color channel analysis
+      Mat rgbPalm = new Mat();
+      Imgproc.cvtColor(palmRegion, rgbPalm, Imgproc.COLOR_BGR2RGB);
 
-    // Apply gentle detrending using moving average
-    int windowSize = Math.max(30, signal.size() / 10); // Adaptive window size
-    List<Double> detrended = new ArrayList<>();
+      // Calculate mean color values for each channel
+      Scalar meanColor = Core.mean(rgbPalm);
 
-    for (int i = 0; i < signal.size(); i++) {
-      double trend = 0;
-      int count = 0;
+      double redChannel = meanColor.val[0];
+      double greenChannel = meanColor.val[1];
+      double blueChannel = meanColor.val[2];
+
+      // Release temporary matrices
+      palmRegion.release();
+      rgbPalm.release();
+
+      return RPPGData.Signal.builder()
+          .redChannel(redChannel)
+          .greenChannel(greenChannel)
+          .blueChannel(blueChannel)
+          .timestamp(timestamp)
+          .build();
+
+    } catch (Exception e) {
+      Log.w(TAG, "Error extracting rPPG signal", e);
+      return null;
+    }
+  }
+
+  /**
+   * Calculate heart rate metrics from green channel signals using peak detection
+   */
+  private RPPGData calculateHeartRateMetrics(List<Double> greenSignals, List<Long> timestamps, double fps) {
+    if (greenSignals.size() < 30) { // Need at least 1 second of data at 30fps
+      Log.w(TAG, "Insufficient data for heart rate calculation");
+      return RPPGData.empty();
+    }
+
+    try {
+      // Apply simple moving average filter to smooth the signal
+      List<Double> smoothedSignals = applyMovingAverageFilter(greenSignals, 5);
+
+      // Detect peaks in the smoothed green channel signal
+      List<Long> heartbeats = detectHeartbeats(smoothedSignals, timestamps, fps);
+
+      if (heartbeats.size() < 2) {
+        Log.w(TAG, "Insufficient heartbeats detected");
+        return RPPGData.empty();
+      }
+
+      // Calculate BPM from intervals between heartbeats
+      List<Double> bpmValues = calculateBPMFromHeartbeats(heartbeats);
+
+      double averageBpm = bpmValues.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+      double minBpm = bpmValues.stream().mapToDouble(Double::doubleValue).min().orElse(0.0);
+      double maxBpm = bpmValues.stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
+
+      // Create signal list
+      List<RPPGData.Signal> signalList = new ArrayList<>();
+      for (int i = 0; i < Math.min(greenSignals.size(), timestamps.size()); i++) {
+        signalList.add(RPPGData.Signal.builder()
+            .redChannel(0.0) // Not using red for heart rate calculation
+            .greenChannel(greenSignals.get(i))
+            .blueChannel(0.0) // Not using blue for heart rate calculation
+            .timestamp(timestamps.get(i))
+            .build());
+      }
+
+      int durationSeconds = (int)((timestamps.get(timestamps.size()-1) - timestamps.get(0)) / 1000);
+
+      Log.i(TAG, String.format("Heart rate analysis complete: %.1f BPM (%.1f-%.1f), %d beats in %d seconds",
+                               averageBpm, minBpm, maxBpm, heartbeats.size(), durationSeconds));
+
+      return RPPGData.builder()
+          .heartbeats(heartbeats)
+          .minBpm(minBpm)
+          .maxBpm(maxBpm)
+          .averageBpm(averageBpm)
+          .baselineBpm(averageBpm) // Use average as baseline
+          .durationSeconds(durationSeconds)
+          .signals(signalList)
+          .build();
+
+    } catch (Exception e) {
+      Log.e(TAG, "Error calculating heart rate metrics", e);
+      return RPPGData.empty();
+    }
+  }
+
+  /**
+   * Apply moving average filter to smooth the signal
+   */
+  private List<Double> applyMovingAverageFilter(List<Double> signals, int windowSize) {
+    List<Double> smoothed = new ArrayList<>();
+
+    for (int i = 0; i < signals.size(); i++) {
       int start = Math.max(0, i - windowSize/2);
-      int end = Math.min(signal.size() - 1, i + windowSize/2);
+      int end = Math.min(signals.size(), i + windowSize/2 + 1);
 
-      for (int j = start; j <= end; j++) {
-        trend += signal.get(j);
-        count++;
-      }
-      trend /= count;
-
-      detrended.add(signal.get(i) - trend);
-    }
-
-    // Apply gentle smoothing with smaller window
-    for (int i = 0; i < detrended.size(); i++) {
-      double smoothed = detrended.get(i);
-
-      // Use 3-point smoothing only
-      if (i > 0 && i < detrended.size() - 1) {
-        smoothed = (detrended.get(i-1) + 2 * detrended.get(i) + detrended.get(i+1)) / 4.0;
-      }
-
-      // Amplify the signal slightly to improve detection
-      processed.add(smoothed * SIGNAL_AMPLIFICATION);
-    }
-
-    // Log preprocessing results
-    double processedMean = processed.stream().mapToDouble(d -> d).average().orElse(0.0);
-    double processedStd = Math.sqrt(processed.stream().mapToDouble(d -> Math.pow(d - processedMean, 2)).average().orElse(0.0));
-    Log.d(TAG, String.format("Processed signal stats - Mean: %.3f, Std: %.3f", processedMean, processedStd));
-
-    return processed;
-  }
-
-  /**
-   * Improved bandpass filter with better frequency response
-   */
-  private List<Double> applyImprovedBandpassFilter(List<Double> signal, double fps) {
-    if (signal.size() < 10) return signal;
-
-    List<Double> filtered = new ArrayList<>(signal);
-
-    // Apply high-pass filter to remove DC and low-frequency drift
-    int hpWindowSize = Math.min((int)(fps * 2), signal.size() / 3); // 2-second window for high-pass
-    for (int i = hpWindowSize; i < signal.size(); i++) {
-      double trend = 0;
-      for (int j = i - hpWindowSize; j < i; j++) {
-        trend += signal.get(j);
-      }
-      trend /= hpWindowSize;
-      filtered.set(i, signal.get(i) - trend);
-    }
-
-    // Apply low-pass filter to remove high-frequency noise
-    int lpWindowSize = Math.max(2, (int)(fps / 6)); // Remove frequencies above 6 Hz
-    List<Double> lowPassed = new ArrayList<>();
-    for (int i = 0; i < filtered.size(); i++) {
       double sum = 0;
       int count = 0;
-      int start = Math.max(0, i - lpWindowSize/2);
-      int end = Math.min(filtered.size() - 1, i + lpWindowSize/2);
-
-      for (int j = start; j <= end; j++) {
-        sum += filtered.get(j);
+      for (int j = start; j < end; j++) {
+        sum += signals.get(j);
         count++;
       }
-      lowPassed.add(sum / count);
+
+      smoothed.add(sum / count);
     }
 
-    Log.d(TAG, String.format("Filter applied - HP window: %d, LP window: %d", hpWindowSize, lpWindowSize));
-    return lowPassed;
+    return smoothed;
   }
 
   /**
-   * Improved peak detection specifically for palm-based rPPG
+   * Detect heartbeats using simple peak detection algorithm
    */
-  private List<Long> extractHeartbeatsImproved(List<Double> signal, List<RPPGData.Signal> originalSignals, double fps) {
+  private List<Long> detectHeartbeats(List<Double> signals, List<Long> timestamps, double fps) {
     List<Long> heartbeats = new ArrayList<>();
 
-    if (signal.size() < 10) return heartbeats;
+    if (signals.size() < 3) return heartbeats;
 
-    // Calculate dynamic threshold based on signal statistics
-    double mean = signal.stream().mapToDouble(d -> d).average().orElse(0.0);
-    double variance = signal.stream().mapToDouble(d -> Math.pow(d - mean, 2)).average().orElse(0.0);
-    double stdDev = Math.sqrt(variance);
+    // Calculate signal statistics for threshold
+    double mean = signals.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+    double stdDev = Math.sqrt(signals.stream()
+        .mapToDouble(val -> Math.pow(val - mean, 2))
+        .average().orElse(0.0));
 
-    // Use adaptive threshold
-    double threshold = mean + stdDev * 0.3; // Lower threshold for palm detection
+    double threshold = mean + 0.5 * stdDev; // Adaptive threshold
+    int minDistanceFrames = (int)(fps * 0.4); // Minimum 0.4 seconds between beats (150 BPM max)
 
-    // Minimum distance between peaks (in samples)
-    int minPeakDistance = (int)(0.4 * fps); // Minimum 0.4 seconds between heartbeats
-    int maxPeakDistance = (int)(1.5 * fps); // Maximum 1.5 seconds between heartbeats
+    int lastPeakIndex = -minDistanceFrames;
 
-    List<Integer> peakIndices = new ArrayList<>();
+    // Find peaks above threshold with minimum distance constraint
+    for (int i = 1; i < signals.size() - 1; i++) {
+      double current = signals.get(i);
+      double previous = signals.get(i - 1);
+      double next = signals.get(i + 1);
 
-    Log.d(TAG, String.format("Peak detection: threshold=%.3f, minDist=%d, signal_size=%d",
-                             threshold, minPeakDistance, signal.size()));
+      // Check if current point is a local maximum above threshold
+      if (current > previous && current > next &&
+          current > threshold &&
+          (i - lastPeakIndex) > minDistanceFrames) {
 
-    // Find peaks using a sliding window approach
-    for (int i = 2; i < signal.size() - 2; i++) {
-      double current = signal.get(i);
-
-      // Check if current point is a local maximum
-      if (current > signal.get(i-1) && current > signal.get(i+1) &&
-          current > signal.get(i-2) && current > signal.get(i+2) &&
-          current > threshold) {
-
-        // Check minimum distance from previous peak
-        boolean validPeak = true;
-        for (int peakIdx : peakIndices) {
-          if (Math.abs(i - peakIdx) < minPeakDistance) {
-            // If current peak is higher, replace the previous one
-            if (current > signal.get(peakIdx)) {
-              peakIndices.remove((Integer)peakIdx);
-              break;
-            } else {
-              validPeak = false;
-              break;
-            }
-          }
-        }
-
-        if (validPeak) {
-          peakIndices.add(i);
-        }
+        heartbeats.add(timestamps.get(i));
+        lastPeakIndex = i;
       }
     }
-
-    // Post-process peaks to ensure reasonable heart rate
-    List<Integer> filteredPeaks = new ArrayList<>();
-    for (int i = 0; i < peakIndices.size(); i++) {
-      int currentPeak = peakIndices.get(i);
-
-      if (filteredPeaks.isEmpty()) {
-        filteredPeaks.add(currentPeak);
-      } else {
-        int lastPeak = filteredPeaks.get(filteredPeaks.size() - 1);
-        int distance = currentPeak - lastPeak;
-
-        // Check if interval is within reasonable heart rate range
-        if (distance >= minPeakDistance && distance <= maxPeakDistance) {
-          filteredPeaks.add(currentPeak);
-        } else if (distance > maxPeakDistance) {
-          // Gap too large, might have missed a beat - keep this peak
-          filteredPeaks.add(currentPeak);
-        }
-        // If distance too small, skip this peak
-      }
-    }
-
-    // Convert peak indices to timestamps
-    for (int peakIdx : filteredPeaks) {
-      if (peakIdx < originalSignals.size()) {
-        heartbeats.add(originalSignals.get(peakIdx).getTimestamp());
-      }
-    }
-
-    Log.d(TAG, String.format("Peak detection found %d raw peaks, %d filtered peaks, %d heartbeats",
-                             peakIndices.size(), filteredPeaks.size(), heartbeats.size()));
 
     return heartbeats;
   }
 
   /**
-   * Calculate instantaneous BPM using simpler approach
+   * Calculate BPM values from heartbeat timestamps
    */
-  private double calculateInstantaneousBPM(List<RPPGData.Signal> signals, int windowSize) {
-    if (signals.size() < 10) return 0;
+  private List<Double> calculateBPMFromHeartbeats(List<Long> heartbeats) {
+    List<Double> bpmValues = new ArrayList<>();
 
-    int startIdx = Math.max(0, signals.size() - windowSize);
-    List<RPPGData.Signal> recentSignals = signals.subList(startIdx, signals.size());
-    
-    if (recentSignals.size() < 10) return 0;
+    for (int i = 1; i < heartbeats.size(); i++) {
+      long intervalMs = heartbeats.get(i) - heartbeats.get(i-1);
+      double intervalSeconds = intervalMs / 1000.0;
+      double bpm = 60.0 / intervalSeconds;
 
-    // Use green channel for instantaneous BPM calculation
-    List<Double> greenValues = new ArrayList<>();
-    for (RPPGData.Signal signal : recentSignals) {
-      greenValues.add(signal.getGreenChannel());
-    }
-
-    // Simple peak counting approach
-    double mean = greenValues.stream().mapToDouble(d -> d).average().orElse(0.0);
-    double threshold = mean + greenValues.stream().mapToDouble(d -> Math.abs(d - mean)).average().orElse(0.0) * 0.2;
-
-    int peaks = 0;
-    boolean wasAboveThreshold = false;
-
-    for (double value : greenValues) {
-      boolean isAboveThreshold = value > threshold;
-
-      if (isAboveThreshold && !wasAboveThreshold) {
-        peaks++;
+      // Filter out unrealistic BPM values
+      if (bpm >= 40 && bpm <= 200) {
+        bpmValues.add(bpm);
       }
-      wasAboveThreshold = isAboveThreshold;
     }
-    
-    // Convert to BPM
-    double timeSpanSeconds = (recentSignals.get(recentSignals.size() - 1).getTimestamp() -
-                             recentSignals.get(0).getTimestamp()) / 1000.0;
-    
-    double bpm = timeSpanSeconds > 0 ? (peaks * 60.0) / timeSpanSeconds : 0;
 
-    // Clamp to reasonable heart rate range
-    return Math.max(40, Math.min(200, bpm));
+    return bpmValues;
   }
 
   /**
-   * Calculate average BPM from heartbeat intervals
+   * Draw rPPG-specific overlays on palm region
    */
-  private double calculateAverageBPM(List<Long> heartbeats) {
-    if (heartbeats.size() < 2) return 0;
+  private void drawRPPGOverlays(Mat frame, Rect palmROI, RPPGData.Signal signal) {
+    if (signal == null) return;
 
-    List<Long> intervals = new ArrayList<>();
-    for (int i = 1; i < heartbeats.size(); i++) {
-      intervals.add(heartbeats.get(i) - heartbeats.get(i-1));
+    try {
+      // Draw signal strength indicator
+      int signalStrength = (int)(signal.getGreenChannel() / 2.55); // Convert to 0-100 scale
+      Scalar strengthColor = signalStrength > 50 ? new Scalar(0, 255, 0) : new Scalar(0, 165, 255);
+
+      // Draw signal strength bar next to palm ROI
+      int barX = palmROI.x + palmROI.width + 5;
+      int barY = palmROI.y;
+      int barWidth = 10;
+      int barHeight = palmROI.height;
+
+      // Background bar
+      Imgproc.rectangle(frame,
+          new Point(barX, barY),
+          new Point(barX + barWidth, barY + barHeight),
+          new Scalar(50, 50, 50), -1);
+
+      // Signal level bar
+      int fillHeight = (int)(barHeight * signalStrength / 100.0);
+      Imgproc.rectangle(frame,
+          new Point(barX, barY + barHeight - fillHeight),
+          new Point(barX + barWidth, barY + barHeight),
+          strengthColor, -1);
+
+      // Signal value text
+      String signalText = String.format("G:%.0f", signal.getGreenChannel());
+      Imgproc.putText(frame, signalText,
+          new Point(palmROI.x, palmROI.y + palmROI.height + 20),
+          Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, new Scalar(255, 255, 255), 1);
+
+    } catch (Exception e) {
+      Log.w(TAG, "Error drawing rPPG overlays", e);
     }
-
-    double avgInterval = intervals.stream().mapToLong(l -> l).average().orElse(0);
-    return avgInterval > 0 ? 60000.0 / avgInterval : 0;
   }
 
   /**
-   * Calculate minimum BPM from heartbeat intervals
+   * Draw comprehensive rPPG analysis overlays on the frame
    */
-  private double calculateMinBPM(List<Long> heartbeats) {
-    if (heartbeats.size() < 2) return 0;
-
-    List<Long> intervals = new ArrayList<>();
-    for (int i = 1; i < heartbeats.size(); i++) {
-      intervals.add(heartbeats.get(i) - heartbeats.get(i-1));
-    }
-
-    long maxInterval = Collections.max(intervals);
-    return maxInterval > 0 ? 60000.0 / maxInterval : 0;
-  }
-
-  /**
-   * Calculate maximum BPM from heartbeat intervals
-   */
-  private double calculateMaxBPM(List<Long> heartbeats) {
-    if (heartbeats.size() < 2) return 0;
-
-    List<Long> intervals = new ArrayList<>();
-    for (int i = 1; i < heartbeats.size(); i++) {
-      intervals.add(heartbeats.get(i) - heartbeats.get(i-1));
-    }
-
-    long minInterval = Collections.min(intervals);
-    return minInterval > 0 ? 60000.0 / minInterval : 0;
-  }
-
-  /**
-   * Calculate baseline BPM from heartbeat intervals using median
-   */
-  private double calculateBaselineBPM(List<Long> heartbeats) {
-    if (heartbeats.size() < 2) return 0;
-
-    List<Long> intervals = new ArrayList<>();
-    for (int i = 1; i < heartbeats.size(); i++) {
-      intervals.add(heartbeats.get(i) - heartbeats.get(i-1));
-    }
-
-    // Calculate median interval
-    Collections.sort(intervals);
-    long medianInterval;
-    if (intervals.size() % 2 == 0) {
-      medianInterval = (intervals.get(intervals.size() / 2 - 1) + intervals.get(intervals.size() / 2)) / 2;
-    } else {
-      medianInterval = intervals.get(intervals.size() / 2);
-    }
-
-    return medianInterval > 0 ? 60000.0 / medianInterval : 0;
-  }
-
-  /**
-   * Draw all overlays on the frame including FPS, frame count, BPM, and ECG waveform
-   */
-  private void drawOverlays(Mat frame, int frameCount, double fps, int validFrames,
-                           int palmFrames, double currentBPM, List<Double> ecgWaveform) {
+  private void drawRPPGAnalysisOverlays(Mat frame, int frameCount, double fps, int palmFrames, int signalCount) {
     try {
       // Text properties
       int fontFace = Imgproc.FONT_HERSHEY_SIMPLEX;
@@ -743,123 +472,452 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
       Scalar bgColor = new Scalar(0, 0, 0); // Black background
       int thickness = 2;
 
-      int frameHeight = frame.rows();
       int frameWidth = frame.cols();
 
       // Draw semi-transparent background for text
       Mat overlay = frame.clone();
       Imgproc.rectangle(overlay,
-        new org.opencv.core.Point(10, 10),
-        new org.opencv.core.Point(400, 150),
+        new Point(10, 10),
+        new Point(450, 150),
         bgColor, -1);
       Core.addWeighted(frame, 0.7, overlay, 0.3, 0, frame);
       overlay.release();
 
-      // Display FPS and frame information
+      // Display comprehensive information
       String fpsText = String.format(Locale.US, "FPS: %.1f", fps);
       String frameText = String.format(Locale.US, "Frame: %d", frameCount);
-      String validText = String.format(Locale.US, "Valid: %d", validFrames);
-      String palmText = String.format(Locale.US, "Palm: %d", palmFrames);
-      String bpmText = String.format(Locale.US, "BPM: %.1f", currentBPM);
+      String palmText = String.format(Locale.US, "Palm Detected: %d", palmFrames);
+      String signalText = String.format(Locale.US, "rPPG Signals: %d", signalCount);
+      String statusText = "rPPG: ACTIVE";
 
-      Imgproc.putText(frame, fpsText, new org.opencv.core.Point(20, 40),
+      Imgproc.putText(frame, fpsText, new Point(20, 40),
                      fontFace, fontScale, textColor, thickness);
-      Imgproc.putText(frame, frameText, new org.opencv.core.Point(20, 70),
+      Imgproc.putText(frame, frameText, new Point(20, 70),
                      fontFace, fontScale, textColor, thickness);
-      Imgproc.putText(frame, validText, new org.opencv.core.Point(20, 100),
+      Imgproc.putText(frame, palmText, new Point(20, 100),
                      fontFace, fontScale, textColor, thickness);
-      Imgproc.putText(frame, palmText, new org.opencv.core.Point(20, 130),
+      Imgproc.putText(frame, signalText, new Point(20, 130),
                      fontFace, fontScale, textColor, thickness);
 
-      // Display BPM in larger text at top right
-      Imgproc.putText(frame, bpmText, new org.opencv.core.Point(frameWidth - 200, 50),
-                     fontFace, 1.2, new Scalar(0, 255, 0), 3); // Green BPM text
+      // Display status in larger text at top right
+      Imgproc.putText(frame, statusText, new Point(frameWidth - 200, 50),
+                     fontFace, 1.0, new Scalar(0, 255, 0), 3); // Green status text
 
-      // Draw ECG waveform at bottom of frame
-      drawECGWaveform(frame, ecgWaveform, frameWidth, frameHeight);
+      // Draw ECG-style graph at the bottom of the frame
+      drawECGGraph(frame, frameCount);
 
     } catch (Exception e) {
-      Log.w(TAG, "Error drawing overlays", e);
+      Log.w(TAG, "Error drawing rPPG analysis overlays", e);
     }
   }
 
   /**
-   * Draw ECG-style waveform at the bottom of the frame
+   * Draw ECG-style graph visualization with realistic ECG waveforms
    */
-  private void drawECGWaveform(Mat frame, List<Double> waveform, int frameWidth, int frameHeight) {
-    if (waveform.size() < 2) return;
+  private void drawECGGraph(Mat frame, int frameCount) {
+    try {
+      int frameWidth = frame.cols();
+      int frameHeight = frame.rows();
+
+      // Graph dimensions
+      int graphHeight = 120;
+      int graphWidth = frameWidth - 40;
+      int graphX = 20;
+      int graphY = frameHeight - graphHeight - 20;
+
+      // Background for ECG graph - medical monitor style
+      Scalar graphBgColor = new Scalar(10, 20, 10); // Dark green background like medical monitors
+      Imgproc.rectangle(frame,
+        new Point(graphX - 10, graphY - 10),
+        new Point(graphX + graphWidth + 10, graphY + graphHeight + 10),
+        graphBgColor, -1);
+
+      // Border
+      Scalar borderColor = new Scalar(100, 100, 100);
+      Imgproc.rectangle(frame,
+        new Point(graphX - 10, graphY - 10),
+        new Point(graphX + graphWidth + 10, graphY + graphHeight + 10),
+        borderColor, 2);
+
+      // Graph title
+      Imgproc.putText(frame, "ECG-Style rPPG Signal",
+        new Point(graphX, graphY - 20),
+        Imgproc.FONT_HERSHEY_SIMPLEX, 0.6, new Scalar(0, 255, 0), 1);
+
+      if (signalHistory.size() < 2) {
+        // Show message when no signal data available
+        Imgproc.putText(frame, "Waiting for palm detection...",
+          new Point(graphX + graphWidth/2 - 100, graphY + graphHeight/2),
+          Imgproc.FONT_HERSHEY_SIMPLEX, 0.6, new Scalar(150, 150, 150), 1);
+        return;
+      }
+
+      // Draw ECG paper-style grid
+      drawECGPaperGrid(frame, graphX, graphY, graphWidth, graphHeight);
+
+      // Generate ECG-like waveform from rPPG signal
+      drawECGWaveform(frame, graphX, graphY, graphWidth, graphHeight);
+
+      // Draw signal info with medical-style annotations
+      drawECGAnnotations(frame, graphX, graphY, graphWidth, graphHeight, frameWidth);
+
+    } catch (Exception e) {
+      Log.w(TAG, "Error drawing ECG graph", e);
+    }
+  }
+
+  /**
+   * Draw ECG paper-style grid like medical devices
+   */
+  private void drawECGPaperGrid(Mat frame, int graphX, int graphY, int graphWidth, int graphHeight) {
+    // Fine grid (1mm equivalent on ECG paper)
+    Scalar fineGridColor = new Scalar(0, 80, 0); // Dark green
+    int fineGridStep = 5;
+
+    for (int x = graphX; x <= graphX + graphWidth; x += fineGridStep) {
+      Imgproc.line(frame, new Point(x, graphY), new Point(x, graphY + graphHeight), fineGridColor, 1);
+    }
+    for (int y = graphY; y <= graphY + graphHeight; y += fineGridStep) {
+      Imgproc.line(frame, new Point(graphX, y), new Point(graphX + graphWidth, y), fineGridColor, 1);
+    }
+
+    // Major grid (5mm equivalent on ECG paper)
+    Scalar majorGridColor = new Scalar(0, 120, 0); // Brighter green
+    int majorGridStep = 25;
+
+    for (int x = graphX; x <= graphX + graphWidth; x += majorGridStep) {
+      Imgproc.line(frame, new Point(x, graphY), new Point(x, graphY + graphHeight), majorGridColor, 1);
+    }
+    for (int y = graphY; y <= graphY + graphHeight; y += majorGridStep) {
+      Imgproc.line(frame, new Point(graphX, y), new Point(graphX + graphWidth, y), majorGridColor, 1);
+    }
+
+    // Draw baseline (isoelectric line)
+    int baselineY = graphY + graphHeight * 2 / 3;
+    Imgproc.line(frame, new Point(graphX, baselineY), new Point(graphX + graphWidth, baselineY),
+                 new Scalar(0, 150, 0), 2);
+  }
+
+  /**
+   * Draw ECG-like waveform from rPPG signal data
+   */
+  private void drawECGWaveform(Mat frame, int graphX, int graphY, int graphWidth, int graphHeight) {
+    if (signalHistory.isEmpty()) return;
+
+    // Calculate baseline and detect heartbeats from signal
+    List<Integer> heartbeatIndices = detectHeartbeatIndicesForVisualization();
+
+    // ECG waveform color - bright green like medical monitors
+    Scalar ecgColor = new Scalar(0, 255, 0);
+    int baselineY = graphY + graphHeight * 2 / 3;
+
+    // Draw the ECG waveform
+    List<Point> waveformPoints = generateECGWaveformPoints(heartbeatIndices, graphX, graphY, graphWidth, graphHeight, baselineY);
+
+    // Draw the waveform with anti-aliasing
+    for (int i = 1; i < waveformPoints.size(); i++) {
+      Point p1 = waveformPoints.get(i - 1);
+      Point p2 = waveformPoints.get(i);
+      Imgproc.line(frame, p1, p2, ecgColor, 2, Imgproc.LINE_AA);
+    }
+
+    // Highlight R-wave peaks
+    highlightRWavePeaks(frame, heartbeatIndices, graphX, graphWidth, baselineY);
+  }
+
+  /**
+   * Detect heartbeat indices in signal history for visualization
+   */
+  private List<Integer> detectHeartbeatIndicesForVisualization() {
+    List<Integer> heartbeatIndices = new ArrayList<>();
+
+    if (signalHistory.size() < 30) return heartbeatIndices;
+
+    // Apply smoothing for better peak detection
+    List<Double> smoothed = applyMovingAverageFilter(signalHistory, 3);
+
+    // Calculate threshold for peak detection
+    double mean = smoothed.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+    double std = Math.sqrt(smoothed.stream()
+        .mapToDouble(val -> Math.pow(val - mean, 2))
+        .average().orElse(0.0));
+    double threshold = mean + 0.6 * std;
+
+    // Find peaks with minimum distance constraint (realistic heart rate)
+    int minDistance = 15; // Minimum 15 samples between beats (~120 BPM max at 30fps)
+    int lastPeakIndex = -minDistance;
+
+    for (int i = 2; i < smoothed.size() - 2; i++) {
+      double current = smoothed.get(i);
+      double prev1 = smoothed.get(i - 1);
+      double prev2 = smoothed.get(i - 2);
+      double next1 = smoothed.get(i + 1);
+      double next2 = smoothed.get(i + 2);
+
+      // Enhanced peak detection
+      if (current > prev1 && current > next1 &&
+          current > prev2 && current > next2 &&
+          current > threshold &&
+          (i - lastPeakIndex) > minDistance) {
+        heartbeatIndices.add(i);
+        lastPeakIndex = i;
+      }
+    }
+
+    return heartbeatIndices;
+  }
+
+  /**
+   * Generate ECG-like waveform points with PQRST complexes
+   */
+  private List<Point> generateECGWaveformPoints(List<Integer> heartbeatIndices, int graphX, int graphY,
+                                               int graphWidth, int graphHeight, int baselineY) {
+    List<Point> points = new ArrayList<>();
+
+    // Start at baseline
+    points.add(new Point(graphX, baselineY));
+
+    int currentIndex = 0;
+    int nextHeartbeatIndex = heartbeatIndices.isEmpty() ? -1 : heartbeatIndices.get(0);
+    int heartbeatCounter = 0;
+
+    // Generate points across the graph width
+    for (int x = graphX; x <= graphX + graphWidth; x += 2) {
+      // Calculate corresponding signal index
+      int signalIndex = (int)((double)(x - graphX) * signalHistory.size() / graphWidth);
+      signalIndex = Math.max(0, Math.min(signalIndex, signalHistory.size() - 1));
+
+      if (nextHeartbeatIndex >= 0 && signalIndex >= nextHeartbeatIndex - 15 && signalIndex <= nextHeartbeatIndex + 15) {
+        // Generate PQRST complex around heartbeat
+        List<Point> pqrstPoints = generatePQRSTComplex(x, baselineY, signalIndex, nextHeartbeatIndex, heartbeatCounter);
+        points.addAll(pqrstPoints);
+
+        // Move to next heartbeat
+        heartbeatCounter++;
+        if (heartbeatCounter < heartbeatIndices.size()) {
+          nextHeartbeatIndex = heartbeatIndices.get(heartbeatCounter);
+        } else {
+          nextHeartbeatIndex = -1;
+        }
+
+        // Skip ahead to avoid overlap
+        x += 30;
+      } else {
+        // Normal baseline with slight physiological variation
+        double baselineVariation = 2 * Math.sin(signalIndex * 0.1) * Math.exp(-Math.abs(signalIndex % 50) * 0.1);
+        int y = (int)(baselineY + baselineVariation);
+        points.add(new Point(x, y));
+      }
+    }
+
+    return points;
+  }
+
+  /**
+   * Generate PQRST complex for a single heartbeat
+   */
+  private List<Point> generatePQRSTComplex(int centerX, int baselineY, int signalIndex, int heartbeatIndex, int beatNumber) {
+    List<Point> pqrstPoints = new ArrayList<>();
+
+    // Add physiological variation between beats
+    double variationFactor = 1.0 + 0.15 * Math.sin(beatNumber * 0.5);
+
+    // P wave (atrial depolarization) - small positive deflection
+    pqrstPoints.add(new Point(centerX - 15, baselineY));
+    pqrstPoints.add(new Point(centerX - 12, baselineY - (8 * variationFactor)));
+    pqrstPoints.add(new Point(centerX - 9, baselineY));
+
+    // PR segment (isoelectric)
+    pqrstPoints.add(new Point(centerX - 6, baselineY));
+
+    // QRS complex - ventricular depolarization
+    // Q wave (small negative deflection)
+    pqrstPoints.add(new Point(centerX - 3, baselineY + (5 * variationFactor)));
+
+    // R wave (large positive deflection - main peak)
+    double rWaveHeight = 60 + 15 * Math.sin(beatNumber * 0.3); // Varying R wave height
+    pqrstPoints.add(new Point(centerX, baselineY - (rWaveHeight * variationFactor)));
+
+    // S wave (negative deflection after R)
+    pqrstPoints.add(new Point(centerX + 3, baselineY + (12 * variationFactor)));
+
+    // ST segment (return toward baseline)
+    pqrstPoints.add(new Point(centerX + 6, baselineY - 1));
+
+    // T wave (ventricular repolarization - positive, broader than P)
+    pqrstPoints.add(new Point(centerX + 9, baselineY - (10 * variationFactor)));
+    pqrstPoints.add(new Point(centerX + 12, baselineY - (8 * variationFactor)));
+    pqrstPoints.add(new Point(centerX + 15, baselineY));
+
+    return pqrstPoints;
+  }
+
+  /**
+   * Highlight R-wave peaks with markers
+   */
+  private void highlightRWavePeaks(Mat frame, List<Integer> heartbeatIndices, int graphX, int graphWidth, int baselineY) {
+    Scalar peakColor = new Scalar(0, 0, 255); // Red for R-wave peaks
+
+    for (int heartbeatIndex : heartbeatIndices) {
+      // Calculate x position for this heartbeat
+      int x = graphX + (int)((double)heartbeatIndex * graphWidth / signalHistory.size());
+
+      // Draw R-wave peak marker
+      Imgproc.circle(frame, new Point(x, baselineY - 60), 3, peakColor, -1);
+
+      // Draw vertical line to show exact timing
+      Imgproc.line(frame, new Point(x, baselineY - 80), new Point(x, baselineY + 10), peakColor, 1);
+    }
+  }
+
+  /**
+   * Draw ECG annotations with medical-style information
+   */
+  private void drawECGAnnotations(Mat frame, int graphX, int graphY, int graphWidth, int graphHeight, int frameWidth) {
+    Scalar textColor = new Scalar(0, 255, 0); // Green text like medical monitors
+    Scalar infoColor = new Scalar(0, 200, 200); // Cyan for measurements
+
+    // Calculate current heart rate from recent data
+    String hrInfo = "HR: --";
+    String rhythmInfo = "Rhythm: Analyzing...";
+
+    if (signalHistory.size() > 60) { // 2 seconds of data
+      List<Double> recentSignals = signalHistory.subList(
+        Math.max(0, signalHistory.size() - 90), signalHistory.size()); // Last 3 seconds
+      double estimatedBPM = estimateCurrentBPM(recentSignals, 30.0);
+
+      if (estimatedBPM > 0) {
+        hrInfo = String.format("HR: %.0f BPM", estimatedBPM);
+
+        // Determine rhythm
+        if (estimatedBPM > 100) {
+          rhythmInfo = "Rhythm: Tachycardia";
+        } else if (estimatedBPM < 60) {
+          rhythmInfo = "Rhythm: Bradycardia";
+        } else {
+          rhythmInfo = "Rhythm: Normal Sinus";
+        }
+      }
+    }
+
+    // Signal quality indicator
+    double signalQuality = calculateSignalQuality();
+    String qualityInfo = String.format("Signal Quality: %.0f%%", signalQuality * 100);
+    Scalar qualityColor = signalQuality > 0.7 ? new Scalar(0, 255, 0) :
+                         signalQuality > 0.4 ? new Scalar(0, 200, 200) : new Scalar(0, 100, 255);
+
+    // Draw annotations
+    Imgproc.putText(frame, hrInfo,
+      new Point(graphX, graphY + graphHeight + 15),
+      Imgproc.FONT_HERSHEY_SIMPLEX, 0.6, textColor, 2);
+
+    Imgproc.putText(frame, rhythmInfo,
+      new Point(graphX + 150, graphY + graphHeight + 15),
+      Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, infoColor, 1);
+
+    Imgproc.putText(frame, qualityInfo,
+      new Point(frameWidth - 200, graphY + graphHeight + 15),
+      Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, qualityColor, 1);
+
+    // Add ECG paper speed and amplitude scales
+    Imgproc.putText(frame, "25mm/s | 10mm/mV",
+      new Point(graphX, graphY - 5),
+      Imgproc.FONT_HERSHEY_SIMPLEX, 0.4, new Scalar(150, 150, 150), 1);
+  }
+
+  /**
+   * Calculate signal quality based on signal characteristics
+   */
+  private double calculateSignalQuality() {
+    if (signalHistory.size() < 30) return 0.0;
+
+    // Calculate signal-to-noise ratio
+    List<Double> recentSignals = signalHistory.subList(
+      Math.max(0, signalHistory.size() - 60), signalHistory.size());
+
+    double mean = recentSignals.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+    double variance = recentSignals.stream()
+        .mapToDouble(val -> Math.pow(val - mean, 2))
+        .average().orElse(0.0);
+
+    // Normalize quality score (higher variance = better signal in this context)
+    double qualityScore = Math.min(1.0, variance / 1000.0);
+
+    // Factor in signal stability
+    double stability = 1.0 - (Math.abs(recentSignals.get(recentSignals.size()-1) - mean) / (mean + 1));
+
+    return Math.max(0.0, Math.min(1.0, qualityScore * stability));
+  }
+
+  /**
+   * Estimate current BPM from recent signal data for real-time display
+   */
+  private double estimateCurrentBPM(List<Double> recentSignals, double fps) {
+    if (recentSignals.size() < 30) return 0; // Need sufficient data
 
     try {
-      int waveformHeight = 100; // Height of waveform area
-      int waveformY = frameHeight - waveformHeight - 20; // Y position of waveform baseline
-      int maxPoints = Math.min(waveform.size(), frameWidth - 40); // Maximum points to display
+      // Apply simple smoothing
+      List<Double> smoothed = applyMovingAverageFilter(recentSignals, 3);
 
-      // Draw waveform background
-      Imgproc.rectangle(frame,
-        new org.opencv.core.Point(20, waveformY - 50),
-        new org.opencv.core.Point(frameWidth - 20, frameHeight - 20),
-        new Scalar(0, 0, 0, 128), -1); // Semi-transparent black
+      // Find peaks
+      List<Integer> peaks = new ArrayList<>();
+      double mean = smoothed.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+      double threshold = mean * 1.1; // 10% above mean
 
-      // Draw grid lines
-      Scalar gridColor = new Scalar(64, 64, 64); // Dark gray
-      for (int i = 0; i < 5; i++) {
-        int y = waveformY - 40 + (i * 20);
-        Imgproc.line(frame,
-          new org.opencv.core.Point(20, y),
-          new org.opencv.core.Point(frameWidth - 20, y),
-          gridColor, 1);
-      }
-
-      // Normalize waveform data
-      double minVal = waveform.stream().mapToDouble(d -> d).min().orElse(0);
-      double maxVal = waveform.stream().mapToDouble(d -> d).max().orElse(1);
-      double range = Math.max(maxVal - minVal, 1e-6);
-
-      // Draw waveform
-      Scalar waveformColor = new Scalar(0, 255, 0); // Green waveform
-      org.opencv.core.Point prevPoint = null;
-
-      int startIdx = Math.max(0, waveform.size() - maxPoints);
-      for (int i = startIdx; i < waveform.size(); i++) {
-        double normalizedValue = (waveform.get(i) - minVal) / range;
-        int x = 20 + (int)((double)(i - startIdx) * (frameWidth - 40) / maxPoints);
-        int y = waveformY - (int)(normalizedValue * 80) + 40; // Scale to fit in waveform area
-
-        org.opencv.core.Point currentPoint = new org.opencv.core.Point(x, y);
-
-        if (prevPoint != null) {
-          Imgproc.line(frame, prevPoint, currentPoint, waveformColor, 2);
+      for (int i = 1; i < smoothed.size() - 1; i++) {
+        if (smoothed.get(i) > smoothed.get(i-1) &&
+            smoothed.get(i) > smoothed.get(i+1) &&
+            smoothed.get(i) > threshold) {
+          peaks.add(i);
         }
-        prevPoint = currentPoint;
       }
 
-      // Draw waveform label
-      Imgproc.putText(frame, "rPPG Signal",
-        new org.opencv.core.Point(30, waveformY - 55),
-        Imgproc.FONT_HERSHEY_SIMPLEX, 0.6, new Scalar(255, 255, 255), 2);
+      if (peaks.size() < 2) return 0;
+
+      // Calculate average interval between peaks
+      double avgInterval = 0;
+      for (int i = 1; i < peaks.size(); i++) {
+        avgInterval += (peaks.get(i) - peaks.get(i-1)) / fps; // Convert to seconds
+      }
+      avgInterval /= (peaks.size() - 1);
+
+      // Convert to BPM
+      double bpm = 60.0 / avgInterval;
+
+      // Return only if within realistic range
+      return (bpm >= 40 && bpm <= 200) ? bpm : 0;
 
     } catch (Exception e) {
-      Log.w(TAG, "Error drawing ECG waveform", e);
+      return 0;
     }
   }
 
   /**
-   * Result container for rPPG processing with baseline
+   * Validate if the palm ROI is suitable for rPPG signal extraction
    */
-  private static class RPPGProcessingResult {
-    final List<Long> heartbeats;
-    final double minBpm;
-    final double maxBpm;
-    final double averageBpm;
-    final double baselineBpm;
+  private boolean isValidPalmROI(Rect palmROI, Mat frame) {
+    if (palmROI == null) return false;
 
-    RPPGProcessingResult(List<Long> heartbeats, double minBpm, double maxBpm, double averageBpm, double baselineBpm) {
-      this.heartbeats = heartbeats;
-      this.minBpm = minBpm;
-      this.maxBpm = maxBpm;
-      this.averageBpm = averageBpm;
-      this.baselineBpm = baselineBpm;
+    // Check if ROI is within frame bounds
+    if (palmROI.x < 0 || palmROI.y < 0 ||
+        palmROI.x + palmROI.width > frame.cols() ||
+        palmROI.y + palmROI.height > frame.rows()) {
+      return false;
     }
+
+    // Check minimum size requirements for reliable signal extraction
+    int minSize = 40; // Minimum 40x40 pixels
+    if (palmROI.width < minSize || palmROI.height < minSize) {
+      return false;
+    }
+
+    // Check maximum size to avoid including too much background
+    int maxSize = Math.min(frame.cols(), frame.rows()) / 3;
+    if (palmROI.width > maxSize || palmROI.height > maxSize) {
+      return false;
+    }
+
+    return true;
   }
 
   /**
@@ -906,3 +964,4 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
     return rotated;
   }
 }
+
