@@ -6,7 +6,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.navigation.fragment.NavHostFragment;
 
@@ -24,11 +23,13 @@ import android.util.Log;
 import android.widget.ImageButton;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.gunadarma.heartratearrhythmiachecker.service.MediaProcessingServiceImpl;
+import com.gunadarma.heartratearrhythmiachecker.service.MainMediaProcessingServiceImpl;
 import com.gunadarma.heartratearrhythmiachecker.util.AppUtil;
 
 public class DetailFragment extends Fragment {
     private FragmentDetailBinding binding;
+    private DataRecordServiceImpl dataRecordService;
+    private MainMediaProcessingServiceImpl mediaProcessingService;
 
     // main tasks
     // - show detail information about selected record
@@ -44,6 +45,27 @@ public class DetailFragment extends Fragment {
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         binding = FragmentDetailBinding.inflate(inflater, container, false);
+        dataRecordService = new DataRecordServiceImpl(requireContext());
+        mediaProcessingService = new MainMediaProcessingServiceImpl(requireContext());
+
+        // Get record ID from arguments
+        if (getArguments() != null && getArguments().containsKey("id")) {
+            String recordId = getArguments().getString("id");
+            if (recordId != null && !recordId.isEmpty()) {
+                new Thread(() -> {
+                    RecordEntry record = dataRecordService.get(recordId);
+                    if (record != null) {
+                        requireActivity().runOnUiThread(() -> {
+                            binding.textId.setText("ID: " + record.getId());
+                            // Set status in tag view
+                            binding.textStatus.setText(record.getStatus().toString());
+                            // ...rest of the UI updates...
+                        });
+                    }
+                }).start();
+            }
+        }
+
         return binding.getRoot();
     }
 
@@ -86,13 +108,6 @@ public class DetailFragment extends Fragment {
                 // Update record with edited values
                 currentRecordEntry.setPatientName(binding.editPatientName.getText().toString());
                 currentRecordEntry.setNotes(binding.editNotes.getText().toString());
-                try {
-                    currentRecordEntry.setDuration(Integer.parseInt(binding.editDuration.getText().toString()));
-                } catch (NumberFormatException e) {
-                    // Handle invalid duration input
-                    android.widget.Toast.makeText(requireContext(), "Invalid duration value", android.widget.Toast.LENGTH_SHORT).show();
-                    return;
-                }
 
                 // Save in background thread
                 new Thread(() -> {
@@ -105,7 +120,7 @@ public class DetailFragment extends Fragment {
                         binding.btnSaveFloat.setVisibility(View.GONE);
                         binding.btnCancel.setVisibility(View.GONE);
                         binding.btnEdit.setVisibility(View.VISIBLE);
-                        updateDisplayValues();
+                        refreshEntryData();
                         android.widget.Toast.makeText(requireContext(), "Updated", android.widget.Toast.LENGTH_SHORT).show();
                     });
                 }).start();
@@ -118,7 +133,7 @@ public class DetailFragment extends Fragment {
             binding.btnCancel.setVisibility(View.GONE);
             binding.btnEdit.setVisibility(View.VISIBLE);
             // Reset edit fields to current values
-            updateDisplayValues();
+            refreshEntryData();
         });
 
         // Remove the old save button click listener since we're using the floating button now
@@ -133,37 +148,54 @@ public class DetailFragment extends Fragment {
                 requireActivity().runOnUiThread(() -> {
                     currentRecordEntry = data;
                     if (data != null) {
-                        String recordDate = AppUtil.toDate(data.getCreateAt());
                         requireActivity().setTitle(String.format("Detail #%s", currentRecordEntry.getId()));
-                        binding.textId.setText("#" + currentRecordEntry.getId() + " - " + recordDate);
-                        binding.textPatientName.setText("Name: " + data.getPatientName());
-                        binding.editDateLabel.setText(recordDate);
-                        binding.textArrhythmia.setText("Status: " + data.getStatus().getValue());
+                        binding.textId.setText(AppUtil.toDate(data.getCreateAt()));
+                        binding.textId.setTypeface(null, android.graphics.Typeface.BOLD);
+                        binding.textId.setTextSize(14);
+                        // adjust textId text color to gray
+                        binding.textStatus.setTextColor(getResources().getColor(com.google.android.material.R.color.material_dynamic_neutral100, null));
+
+
+                        binding.textStatus.setText(data.getStatus().getValue());
+
+                        binding.textPatientName.setText("Patient name: " + AppUtil.patientNameOrDefault(currentRecordEntry));
+                        if (currentRecordEntry.getPatientName() == null || currentRecordEntry.getPatientName().isEmpty()) {
+                            binding.textPatientName.setTypeface(null, android.graphics.Typeface.ITALIC);
+                        } else {
+                            binding.textPatientName.setTypeface(null, android.graphics.Typeface.NORMAL);
+                        }
+
                         binding.textHeartRate.setText("Heart Rate: " + data.getBeatsPerMinute());
                         binding.editPatientName.setText(data.getPatientName());
                         binding.textNotes.setText("Notes: " + (data.getNotes() != null ? data.getNotes() : ""));
                         binding.editNotes.setText(data.getNotes() != null ? data.getNotes() : "");
                         binding.textDuration.setText("Duration: " + data.getDuration());
-                        binding.editDuration.setText(String.valueOf(data.getDuration()));
 
                         // Set up video playback using the actual video file
                         try {
-                            File videoFile = new File(
+                            File finalVideo = new File(
                                 requireContext().getExternalFilesDir(null),
-                                String.format("%s/%s/original.mp4", AppConstant.DATA_DIR, data.getId())
+                                String.format("%s/%s/%s", AppConstant.DATA_DIR, data.getId(), AppConstant.FINAL_VIDEO_NAME)
                             );
-                            if (videoFile.exists()) {
+                            File originalVideo = new File(
+                                requireContext().getExternalFilesDir(null),
+                                String.format("%s/%s/%s", AppConstant.DATA_DIR, data.getId(), AppConstant.ORIGINAL_VIDEO_NAME)
+                            );
+
+                            File videoToPlay = finalVideo.exists() ? finalVideo : originalVideo;
+
+                            if (videoToPlay.exists()) {
                                 android.widget.MediaController mediaController = new android.widget.MediaController(requireContext());
                                 binding.videoView.setMediaController(mediaController);
                                 mediaController.setAnchorView(binding.videoView);
 
                                 // Set audio attributes to not interfere with background playback
                                 binding.videoView.setAudioFocusRequest(android.media.AudioManager.AUDIOFOCUS_NONE);
-                                binding.videoView.setVideoPath(videoFile.getAbsolutePath());
+                                binding.videoView.setVideoPath(videoToPlay.getAbsolutePath());
 
                                 // Show first frame without starting playback
                                 binding.videoView.setOnPreparedListener(mp -> {
-                                    mp.setLooping(true);
+                                    mp.setLooping(false);
                                     binding.videoView.seekTo(1);
                                 });
 
@@ -175,7 +207,7 @@ public class DetailFragment extends Fragment {
                                     }
                                 });
                             } else {
-                                Log.e("DetailFragment", "Video file not found: " + videoFile.getAbsolutePath());
+                                Log.e("DetailFragment", "No video file found at either path");
                                 binding.videoContainer.setVisibility(View.GONE);
                             }
                         } catch (Exception e) {
@@ -191,14 +223,24 @@ public class DetailFragment extends Fragment {
             }).start();
         }
 
-        // Show heart rhythm timeline graph from res/raw/mock_heartbeats.webp
-        try {
-            int graphResId = getResources().getIdentifier("mock_heartbeats", "raw", requireContext().getPackageName());
-            if (graphResId != 0) {
-                binding.graphView.setImageResource(graphResId);
+        // Load heart rhythm timeline graph from data directory
+        if (args != null && args.containsKey("id")) {
+            String dataId = String.valueOf(args.get("id"));
+            try {
+                File heartbeatsFile = new File(
+                    requireContext().getExternalFilesDir(null),
+                    String.format("%s/%s/heartbeats.jpg", AppConstant.DATA_DIR, dataId)
+                );
+                if (heartbeatsFile.exists()) {
+                    binding.graphView.setImageURI(android.net.Uri.fromFile(heartbeatsFile));
+                } else {
+                    Log.e("DetailFragment", "Heartbeats graph not found: " + heartbeatsFile.getAbsolutePath());
+                    binding.graphView.setVisibility(View.GONE);
+                }
+            } catch (Exception e) {
+                Log.e("DetailFragment", "Failed to load heartbeats.jpg", e);
+                binding.graphView.setVisibility(View.GONE);
             }
-        } catch (Exception e) {
-            Log.e("DetailFragment", "Failed to load mock_heartbeats.webp", e);
         }
 
         // Delete record
@@ -250,12 +292,11 @@ public class DetailFragment extends Fragment {
             // Create and run processing task
             new Thread(() -> {
                 try {
-                    MediaProcessingServiceImpl mediaProcessingService = new MediaProcessingServiceImpl(requireContext());
-                    mediaProcessingService.createHeartBeatsVideo(currentRecordEntry.getId());
+                    MainMediaProcessingServiceImpl mediaProcessingService = new MainMediaProcessingServiceImpl(requireContext());
+                    mediaProcessingService.createHeartBeatsVideo(currentRecordEntry);
 
                     // Update record status after processing
                     if (currentRecordEntry != null) {
-                        currentRecordEntry.setStatus(RecordEntry.Status.UNCHECKED);
                         DataRecordServiceImpl dataRecordService = new DataRecordServiceImpl(requireContext());
                         dataRecordService.saveData(currentRecordEntry);
                     }
@@ -265,12 +306,15 @@ public class DetailFragment extends Fragment {
                         progressDialog.dismiss();
                         // Refresh the status display
                         if (currentRecordEntry != null) {
-                            binding.textArrhythmia.setText("Status: " + currentRecordEntry.getStatus().getValue());
+                            binding.textStatus.setText(currentRecordEntry.getStatus().getValue());
                         }
                         // Show success message
                         android.widget.Toast.makeText(requireContext(),
                             "Video processing completed",
                             android.widget.Toast.LENGTH_SHORT).show();
+
+                        // done processing refresh data
+                        refreshEntryData();
                     });
                 } catch (Exception e) {
                     requireActivity().runOnUiThread(() -> {
@@ -305,23 +349,76 @@ public class DetailFragment extends Fragment {
 
         binding.editPatientName.setVisibility(editVisibility);
         binding.editNotes.setVisibility(editVisibility);
-        binding.editDuration.setVisibility(editVisibility);
-        binding.btnPickDate.setVisibility(editVisibility);
-        binding.editDateLabel.setVisibility(editVisibility);
 
         binding.textPatientName.setVisibility(textVisibility);
         binding.textNotes.setVisibility(textVisibility);
         binding.textDuration.setVisibility(textVisibility);
     }
 
-    private void updateDisplayValues() {
+    private void refreshEntryData() {
         if (currentRecordEntry != null) {
-            binding.textPatientName.setText("Name: " + currentRecordEntry.getPatientName());
+            binding.textPatientName.setText("Patient name: " + AppUtil.patientNameOrDefault(currentRecordEntry));
             binding.editPatientName.setText(currentRecordEntry.getPatientName());
+            if (currentRecordEntry.getPatientName() == null || currentRecordEntry.getPatientName().isEmpty()) {
+                binding.textPatientName.setTypeface(null, android.graphics.Typeface.ITALIC);
+            } else {
+                binding.textPatientName.setTypeface(null, android.graphics.Typeface.NORMAL);
+            }
+
             binding.textNotes.setText("Notes: " + (currentRecordEntry.getNotes() != null ? currentRecordEntry.getNotes() : ""));
             binding.editNotes.setText(currentRecordEntry.getNotes() != null ? currentRecordEntry.getNotes() : "");
             binding.textDuration.setText("Duration: " + currentRecordEntry.getDuration());
-            binding.editDuration.setText(String.valueOf(currentRecordEntry.getDuration()));
+
+            // refresh video
+            if (binding.videoView != null) {
+                binding.videoView.stopPlayback();
+                try {
+                    File finalVideo = new File(
+                        requireContext().getExternalFilesDir(null),
+                        String.format("%s/%s/%s", AppConstant.DATA_DIR, currentRecordEntry.getId(), AppConstant.FINAL_VIDEO_NAME)
+                    );
+                    File originalVideo = new File(
+                        requireContext().getExternalFilesDir(null),
+                        String.format("%s/%s/%s", AppConstant.DATA_DIR, currentRecordEntry.getId(), AppConstant.ORIGINAL_VIDEO_NAME)
+                    );
+
+                    File videoToPlay = finalVideo.exists() ? finalVideo : originalVideo;
+
+                    if (videoToPlay.exists()) {
+                        binding.videoView.setVideoPath(videoToPlay.getAbsolutePath());
+                        binding.videoContainer.setVisibility(View.VISIBLE);
+                        binding.videoView.seekTo(1); // Show first frame
+                    } else {
+                        binding.videoContainer.setVisibility(View.GONE);
+                    }
+                } catch (Exception e) {
+                    Log.e("DetailFragment", "Failed to reload video: " + e.getMessage());
+                    binding.videoContainer.setVisibility(View.GONE);
+                }
+            }
+
+            // refresh heartbeats image
+            try {
+                File heartbeatsFile = new File(
+                    requireContext().getExternalFilesDir(null),
+                    String.format("%s/%s/heartbeats.jpg", AppConstant.DATA_DIR, currentRecordEntry.getId())
+                );
+                if (heartbeatsFile.exists()) {
+                    // Clear the current image first
+                    binding.graphView.setImageDrawable(null);
+                    // Add a timestamp to the URI to prevent caching
+                    android.net.Uri imageUri = android.net.Uri.fromFile(heartbeatsFile);
+                    String uniqueUri = imageUri.toString() + "?timestamp=" + System.currentTimeMillis();
+                    binding.graphView.setImageURI(android.net.Uri.parse(uniqueUri));
+                    binding.graphView.setVisibility(View.VISIBLE);
+                } else {
+                    Log.e("DetailFragment", "Heartbeats graph not found: " + heartbeatsFile.getAbsolutePath());
+                    binding.graphView.setVisibility(View.GONE);
+                }
+            } catch (Exception e) {
+                Log.e("DetailFragment", "Failed to load heartbeats.jpg", e);
+                binding.graphView.setVisibility(View.GONE);
+            }
         }
     }
 

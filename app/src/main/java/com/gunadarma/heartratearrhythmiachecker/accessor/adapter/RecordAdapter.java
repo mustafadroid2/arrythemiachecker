@@ -41,7 +41,7 @@ public class RecordAdapter extends RecyclerView.Adapter<RecordAdapter.RecordView
 
         // Bind data to the views
         holder.recordId.setText(String.format("#%s", record.getId()));
-        holder.patientName.setText(record.getPatientName());
+        holder.patientName.setText(AppUtil.patientNameOrDefault(record, true));
         holder.status.setText(record.getStatus().getValue());
         holder.date.setText(recordDate);
 

@@ -14,16 +14,18 @@ import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
-import androidx.navigation.fragment.NavHostFragment;
 
 import com.gunadarma.heartratearrhythmiachecker.R;
 import com.gunadarma.heartratearrhythmiachecker.databinding.FragmentRecordBinding;
 import com.gunadarma.heartratearrhythmiachecker.model.RecordEntry;
 import com.gunadarma.heartratearrhythmiachecker.service.DataRecordServiceImpl;
-import com.gunadarma.heartratearrhythmiachecker.service.MediaProcessingServiceImpl;
+import com.gunadarma.heartratearrhythmiachecker.service.MainMediaProcessingServiceImpl;
 import com.gunadarma.heartratearrhythmiachecker.constant.AppConstant;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.List;
 
 public class RecordFragment extends Fragment {
@@ -218,7 +220,7 @@ public class RecordFragment extends Fragment {
         });
 
         // Process button click (tray)
-        MediaProcessingServiceImpl mediaProcessingService = new MediaProcessingServiceImpl(requireContext());
+        MainMediaProcessingServiceImpl mediaProcessingService = new MainMediaProcessingServiceImpl(requireContext());
         binding.btnProcess.setOnClickListener(v -> {
             // First create and save the record entry
             if (currentRecordID > 0) {
@@ -293,8 +295,8 @@ public class RecordFragment extends Fragment {
                         currentVideoPath = destinationFile.getAbsolutePath();
 
                         // Copy the file
-                        try (java.io.InputStream in = requireContext().getContentResolver().openInputStream(videoUri);
-                             java.io.OutputStream out = new java.io.FileOutputStream(destinationFile)) {
+                        try (InputStream in = requireContext().getContentResolver().openInputStream(videoUri);
+                             OutputStream out = new FileOutputStream(destinationFile)) {
                             byte[] buffer = new byte[8192];
                             int read;
                             while ((read = in.read(buffer)) != -1) {
@@ -327,6 +329,9 @@ public class RecordFragment extends Fragment {
                             "Error copying video file",
                             android.widget.Toast.LENGTH_SHORT).show();
                     }
+
+                    // Extract and store video metadata
+                    extractVideoMetadata(currentVideoPath);
                 } else {
                     android.widget.Toast.makeText(requireContext(),
                         "Please select an MP4 video file",
@@ -443,6 +448,9 @@ public class RecordFragment extends Fragment {
         // createVideo
         try {
             camera.unlock();
+                // Extract metadata from the recorded video
+                extractVideoMetadata(currentVideoPath);
+
             mediaRecorder = new android.media.MediaRecorder();
 
             // Order matters! Set sources first
@@ -455,7 +463,7 @@ public class RecordFragment extends Fragment {
             mediaRecorder.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC);
             mediaRecorder.setVideoEncoder(android.media.MediaRecorder.VideoEncoder.H264);
             mediaRecorder.setVideoEncodingBitRate(10000000); // 10Mbps
-            mediaRecorder.setVideoFrameRate(30);
+            mediaRecorder.setVideoFrameRate(AppConstant.OUTPUT_VIDEO_FPS);
 
             // Set the output resolution (make sure it matches preview size)
             mediaRecorder.setVideoSize(videoWidth, videoHeight);
@@ -863,6 +871,54 @@ public class RecordFragment extends Fragment {
             android.widget.Toast.makeText(requireContext(),
                 "Failed to switch camera",
                 android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void extractVideoMetadata(String videoPath) {
+        android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(videoPath);
+
+            // Get duration in milliseconds
+            String durationStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+            long durationMs = Long.parseLong(durationStr);
+
+            // Get frame count - requires API 28+
+            String frameCount = "0";
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                frameCount = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT);
+            }
+
+            // Get FPS - requires API 28+
+            String fps = "0";
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                fps = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE);
+            }
+
+            // If FPS is not available from metadata, calculate approximate FPS
+            if (fps.equals("0") && !frameCount.equals("0")) {
+                float calculatedFps = (Float.parseFloat(frameCount) / (durationMs / 1000.0f));
+                fps = String.valueOf(calculatedFps);
+            }
+
+            // Store metadata in the dataRecordService
+//            new Thread(() -> {
+//                if (currentRecordID > 0) {
+//                    dataRecordService.updateVideoMetadata(
+//                        currentRecordID,
+//                        Float.parseFloat(fps),
+//                        Integer.parseInt(frameCount),
+//                        durationMs
+//                    );
+//                }
+//            }).start();
+
+        } catch (Exception e) {
+            android.util.Log.e("RecordFragment", "Error extracting video metadata: " + e.getMessage());
+        } finally {
+            try {
+                retriever.release();
+            } catch (Exception ignored) {}
         }
     }
 }

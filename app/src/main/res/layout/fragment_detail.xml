@@ -12,6 +12,7 @@
             android:id="@+id/detailContent"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:paddingBottom="200dp"
             android:orientation="vertical">
 
             <androidx.constraintlayout.widget.ConstraintLayout
@@ -46,7 +47,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:paddingTop="12dp"
+                android:paddingHorizontal="16dp">
 
                 <ProgressBar
                     android:id="@+id/progressBar"
@@ -65,29 +67,34 @@
 
 
                     <!-- Record details -->
-                    <TextView
-                        android:id="@+id/textId"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="ID: "
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp" />
-                    <Button
-                        android:id="@+id/btnPickDate"
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Pick Date"
-                        android:layout_marginBottom="4dp"
-                        android:visibility="gone" />
-                    <TextView
-                        android:id="@+id/editDateLabel"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp"
-                        android:visibility="gone"
-                        android:text="" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="8dp">
 
+                        <TextView
+                            android:id="@+id/textId"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="ID: "
+                            android:textSize="16sp" />
+
+                        <TextView
+                            android:id="@+id/textStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            style="@style/StatusTag"
+                            android:text="Status" />
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="#DDDDDD"
+                        android:layout_marginBottom="12dp" />
 
                     <!-- Editable Fields -->
                     <TextView
@@ -121,13 +128,6 @@
                         android:layout_marginBottom="4dp"
                         android:visibility="gone" />
                     <TextView
-                        android:id="@+id/textArrhythmia"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Status: "
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp" />
-                    <TextView
                         android:id="@+id/textDuration"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -155,8 +155,7 @@
                     <ImageView
                         android:id="@+id/graphView"
                         android:layout_width="match_parent"
-                        android:layout_height="200dp"
-                        android:background="#EEE"
+                        android:layout_height="120dp"
                         android:layout_marginBottom="12dp" />
 
                     <!-- Action buttons -->

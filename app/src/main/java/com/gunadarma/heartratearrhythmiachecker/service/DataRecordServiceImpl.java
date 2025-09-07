@@ -47,6 +47,10 @@ public class DataRecordServiceImpl {
     }
 
     public RecordEntry saveData(RecordEntry record) {
+        if (record.getStatus() == null) {
+            record.setStatus(RecordEntry.Status.UNCHECKED);
+        }
+
         recordEntryDao.insert(record);
         // implement retuning the saved record
         // please remember that the id is auto-generated
