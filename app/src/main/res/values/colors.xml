@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
+    <!-- Video pill text colors -->
+    <color name="video_pill_text_active">#000000</color>
+    <color name="video_pill_text_inactive">#FFFFFF</color>
+
+    <!-- Status colors -->
+    <color name="status_processing">#FF9800</color>
+    <color name="status_completed">#4CAF50</color>
+    <color name="status_pending">#2196F3</color>
+    <color name="status_error">#F44336</color>
 </resources>

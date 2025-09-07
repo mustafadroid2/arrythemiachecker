@@ -1,6 +1,7 @@
 package com.gunadarma.heartratearrhythmiachecker.service.rppg;
 
 import android.content.Context;
+import android.media.MediaMetadataRetriever;
 import android.util.Log;
 
 import com.gunadarma.heartratearrhythmiachecker.constant.AppConstant;
@@ -11,36 +12,32 @@ import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfDouble;
-import org.opencv.core.MatOfRect;
 import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
-import org.opencv.objdetect.CascadeClassifier;
 import org.opencv.videoio.VideoCapture;
 import org.opencv.videoio.VideoWriter;
 import org.opencv.videoio.Videoio;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 public class RPPGHandPalmServiceImpl implements RPPGService {
   private static final String TAG = "RPPGHandPalmService";
+  private final MediaPipeHandTracker mpHandTracker;
   private final Context context;
-  private MediaPipeHandTracker mpHandTracker;
 
   // rPPG processing constants for palm detection
   private static final double MIN_HR_BPM = 50.0;
   private static final double MAX_HR_BPM = 180.0;
+  private static final double SKIN_CONFIDENCE_THRESHOLD = 0.5;
+  private static final double PEAK_THRESHOLD = 0.5;
   private static final double BANDPASS_LOW_FREQ = 0.83; // 50 BPM in Hz
-  private static final double BANDPASS_HIGH_FREQ = 3.0; // 180 BPM in Hz
-  private static final int WINDOW_SIZE_SECONDS = 6; // Processing window size
-  private static final double PEAK_THRESHOLD = 0.25; // Lower threshold for palm signals
-  private static final double SKIN_CONFIDENCE_THRESHOLD = 0.15; // Minimum skin pixel ratio
+  private static final double BANDPASS_HIGH_FREQ = 0.83; // 50 BPM in Hz
 
   public RPPGHandPalmServiceImpl(Context context) {
     this.context = context;
@@ -63,11 +60,16 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
       int totalFrames = (int) cap.get(Videoio.CAP_PROP_FRAME_COUNT);
       int videoDurationSeconds = (int) (totalFrames / fps);
 
-      Log.d(TAG, String.format("Video properties: %.2f fps, %d frames, %d seconds",
-                               fps, totalFrames, videoDurationSeconds));
+      // Detect video rotation to maintain original aspect ratio
+      int rotationDegrees = getVideoRotation(videoPath);
+      boolean needsRotation = rotationDegrees == 90 || rotationDegrees == 270;
+
+      Log.d(TAG, String.format("Video properties: %.2f fps, %d frames, %d seconds, rotation: %d°%s",
+                               fps, totalFrames, videoDurationSeconds, rotationDegrees,
+                               needsRotation ? " (needs correction)" : ""));
 
       // Extract RGB signals from palm region
-      List<RPPGData.Signal> signals = extractPalmSignals(cap, fps);
+      List<RPPGData.Signal> signals = extractPalmSignals(videoPath, cap, fps, rotationDegrees);
 
       if (signals.isEmpty()) {
         Log.w(TAG, "No valid palm signals extracted");
@@ -107,7 +109,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
     }
   }
 
-  private List<RPPGData.Signal> extractPalmSignals(VideoCapture cap, double fps) {
+  private List<RPPGData.Signal> extractPalmSignals(String videoPath, VideoCapture cap, double fps, int rotationDegrees) {
     List<RPPGData.Signal> signals = new ArrayList<>();
     Mat frame = new Mat();
     long startTime = System.currentTimeMillis();
@@ -126,14 +128,81 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
     // - List of Heartbeat timestamps in ms
     // - Average, min, max BPM
 
-    String outputPath = "result.mp4";
-    int fourcc = VideoWriter.fourcc('m', 'p', '4', 'v');
-    Size frameSize = new Size(frame.cols(), frame.rows());
-    VideoWriter writer = new VideoWriter(outputPath, fourcc, fps, frameSize);
+    // Initialize video writer after reading first frame to get proper dimensions
+    VideoWriter writer = null;
+    String outputPath = videoPath.replace("original.mp4", "final.mp4");
 
+    // Ensure output directory exists
+    File outputFile = new File(outputPath);
+    File outputDir = outputFile.getParentFile();
+    if (outputDir != null && !outputDir.exists()) {
+      boolean created = outputDir.mkdirs();
+      Log.d(TAG, "Created output directory: " + outputDir.getAbsolutePath() + " - " + created);
+    }
+
+    // Try multiple codec options for better compatibility
+    int[] codecOptions = {
+      VideoWriter.fourcc('X', 'V', 'I', 'D'), // XVID - widely supported
+      VideoWriter.fourcc('M', 'J', 'P', 'G'), // MJPEG - very compatible
+      VideoWriter.fourcc('H', '2', '6', '4'), // H264 - modern standard
+      VideoWriter.fourcc('m', 'p', '4', 'v'), // MP4V - original attempt
+      0 // Default codec
+    };
+
+    // For ECG waveform visualization
+    List<Double> ecgWaveform = new ArrayList<>();
+    double currentBPM = 0.0;
+    double lastSignalValue = 0.0;
+    
     // ENSURE ONLY USE MEDIAPIPE FOR HAND DETECTION FOR CONSISTENCY
     while (cap.read(frame)) {
       if (frame.empty()) continue;
+
+      // Apply rotation correction to maintain original aspect ratio
+      if (rotationDegrees != 0) {
+        frame = rotateFrame(frame, rotationDegrees);
+      }
+
+      // Initialize video writer with first frame dimensions (after rotation)
+      if (writer == null) {
+        Size frameSize = new Size(frame.cols(), frame.rows());
+
+        // Try different codecs until one works
+        boolean writerOpened = false;
+        for (int fourcc : codecOptions) {
+          try {
+            writer = new VideoWriter(outputPath, fourcc, fps, frameSize, true);
+            if (writer.isOpened()) {
+              writerOpened = true;
+              Log.i(TAG, "Video writer initialized successfully with fourcc: " + fourcc +
+                         ", path: " + outputPath + ", size: " + frameSize.width + "x" + frameSize.height);
+              break;
+            } else {
+              if (writer != null) {
+                writer.release();
+                writer = null;
+              }
+            }
+          } catch (Exception e) {
+            Log.w(TAG, "Failed to create writer with fourcc " + fourcc, e);
+            if (writer != null) {
+              writer.release();
+              writer = null;
+            }
+          }
+        }
+
+        if (!writerOpened) {
+          Log.e(TAG, "Failed to open video writer with any codec. Continuing without video output.");
+          Log.e(TAG, "Output path: " + outputPath);
+          Log.e(TAG, "Frame size: " + frameSize.width + "x" + frameSize.height);
+          Log.e(TAG, "FPS: " + fps);
+          // Continue processing without video output
+        }
+      }
+
+      // Clone frame for overlay drawing
+      Mat overlayFrame = frame.clone();
 
       try {
         // Try MediaPipe hand detection first
@@ -144,6 +213,10 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
         if (handResult != null && handResult.palmROI != null && isValidPalmROI(handResult.palmROI, frame)) {
           palmFrames++;
+          
+          // Draw hand detection overlays using MediaPipe's method
+          mpHandTracker.drawHandAnnotations(overlayFrame, handResult);
+          
           Mat palmRegion = new Mat(frame, handResult.palmROI);
           Mat rgb = new Mat();
           Imgproc.cvtColor(palmRegion, rgb, Imgproc.COLOR_BGR2RGB);
@@ -159,24 +232,57 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
             long timestamp = startTime + (long) (frameCount * (1000.0 / fps));
             signals.add(new RPPGData.Signal(means.val[0], means.val[1], means.val[2], timestamp));
             validFrames++;
+            
+            // Calculate instantaneous signal value for ECG waveform
+            lastSignalValue = (means.val[0] + means.val[1] + means.val[2]) / 3.0;
+            ecgWaveform.add(lastSignalValue);
+            
+            // Calculate current BPM from recent signals (last 5 seconds)
+            if (signals.size() > fps * 5) {
+              currentBPM = calculateInstantaneousBPM(signals, (int)(fps * 5));
+            }
           }
 
           palmRegion.release();
           rgb.release();
           skinMask.release();
           kernel.release();
+        } else {
+          // No hand detected - add zero to maintain timeline
+          ecgWaveform.add(0.0);
         }
+        
+        // Draw all overlays on frame
+        drawOverlays(overlayFrame, frameCount, fps, validFrames, palmFrames, currentBPM, ecgWaveform);
+        
+        // Write frame to output video only if writer is available
+        if (writer != null && writer.isOpened()) {
+          writer.write(overlayFrame);
+        }
+
       } catch (Exception e) {
         Log.w(TAG, "Error processing frame " + frameCount, e);
+        // Still write the frame even if processing failed
+        drawOverlays(overlayFrame, frameCount, fps, validFrames, palmFrames, currentBPM, ecgWaveform);
+        if (writer != null && writer.isOpened()) {
+          writer.write(overlayFrame);
+        }
       }
 
+      overlayFrame.release();
       frameCount++;
+      
       if (frameCount % 100 == 0) {
         Log.d(TAG, String.format("Processed %d frames, %d valid, %d with palm detection",
                                  frameCount, validFrames, palmFrames));
       }
     }
 
+    if (writer != null) {
+      writer.release();
+      Log.i(TAG, "Overlay video saved to: " + outputPath);
+    }
+    
     Log.i(TAG, String.format("Extracted signals from %d/%d frames (%d palm frames)",
                              validFrames, frameCount, palmFrames));
     return signals;
@@ -538,6 +644,156 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
   }
 
   /**
+   * Calculate instantaneous BPM from recent signals
+   */
+  private double calculateInstantaneousBPM(List<RPPGData.Signal> signals, int windowSize) {
+    if (signals.size() < 2) return 0;
+    
+    int startIdx = Math.max(0, signals.size() - windowSize);
+    List<RPPGData.Signal> recentSignals = signals.subList(startIdx, signals.size());
+    
+    if (recentSignals.size() < 2) return 0;
+    
+    // Simple peak counting for instantaneous BPM
+    double sum = 0;
+    for (RPPGData.Signal signal : recentSignals) {
+      sum += (signal.getRedChannel() + signal.getGreenChannel() + signal.getBlueChannel()) / 3.0;
+    }
+    double mean = sum / recentSignals.size();
+    
+    int peaks = 0;
+    boolean wasAboveMean = false;
+    for (RPPGData.Signal signal : recentSignals) {
+      double value = (signal.getRedChannel() + signal.getGreenChannel() + signal.getBlueChannel()) / 3.0;
+      boolean isAboveMean = value > mean;
+      
+      if (isAboveMean && !wasAboveMean) {
+        peaks++;
+      }
+      wasAboveMean = isAboveMean;
+    }
+    
+    // Convert peaks to BPM
+    double timeSpanSeconds = (recentSignals.get(recentSignals.size() - 1).getTimestamp() - 
+                             recentSignals.get(0).getTimestamp()) / 1000.0;
+    
+    return timeSpanSeconds > 0 ? (peaks * 60.0) / timeSpanSeconds : 0;
+  }
+
+  /**
+   * Draw all overlays on the frame including FPS, frame count, BPM, and ECG waveform
+   */
+  private void drawOverlays(Mat frame, int frameCount, double fps, int validFrames, 
+                           int palmFrames, double currentBPM, List<Double> ecgWaveform) {
+    try {
+      // Text properties
+      int fontFace = Imgproc.FONT_HERSHEY_SIMPLEX;
+      double fontScale = 0.8;
+      Scalar textColor = new Scalar(255, 255, 255); // White text
+      Scalar bgColor = new Scalar(0, 0, 0); // Black background
+      int thickness = 2;
+      
+      int frameHeight = frame.rows();
+      int frameWidth = frame.cols();
+      
+      // Draw semi-transparent background for text
+      Mat overlay = frame.clone();
+      Imgproc.rectangle(overlay, 
+        new org.opencv.core.Point(10, 10), 
+        new org.opencv.core.Point(400, 150), 
+        bgColor, -1);
+      Core.addWeighted(frame, 0.7, overlay, 0.3, 0, frame);
+      overlay.release();
+      
+      // Display FPS and frame information
+      String fpsText = String.format(Locale.US, "FPS: %.1f", fps);
+      String frameText = String.format(Locale.US, "Frame: %d", frameCount);
+      String validText = String.format(Locale.US, "Valid: %d", validFrames);
+      String palmText = String.format(Locale.US, "Palm: %d", palmFrames);
+      String bpmText = String.format(Locale.US, "BPM: %.1f", currentBPM);
+      
+      Imgproc.putText(frame, fpsText, new org.opencv.core.Point(20, 40), 
+                     fontFace, fontScale, textColor, thickness);
+      Imgproc.putText(frame, frameText, new org.opencv.core.Point(20, 70), 
+                     fontFace, fontScale, textColor, thickness);
+      Imgproc.putText(frame, validText, new org.opencv.core.Point(20, 100), 
+                     fontFace, fontScale, textColor, thickness);
+      Imgproc.putText(frame, palmText, new org.opencv.core.Point(20, 130), 
+                     fontFace, fontScale, textColor, thickness);
+      
+      // Display BPM in larger text at top right
+      Imgproc.putText(frame, bpmText, new org.opencv.core.Point(frameWidth - 200, 50), 
+                     fontFace, 1.2, new Scalar(0, 255, 0), 3); // Green BPM text
+      
+      // Draw ECG waveform at bottom of frame
+      drawECGWaveform(frame, ecgWaveform, frameWidth, frameHeight);
+      
+    } catch (Exception e) {
+      Log.w(TAG, "Error drawing overlays", e);
+    }
+  }
+
+  /**
+   * Draw ECG-style waveform at the bottom of the frame
+   */
+  private void drawECGWaveform(Mat frame, List<Double> waveform, int frameWidth, int frameHeight) {
+    if (waveform.size() < 2) return;
+    
+    try {
+      int waveformHeight = 100; // Height of waveform area
+      int waveformY = frameHeight - waveformHeight - 20; // Y position of waveform baseline
+      int maxPoints = Math.min(waveform.size(), frameWidth - 40); // Maximum points to display
+      
+      // Draw waveform background
+      Imgproc.rectangle(frame, 
+        new org.opencv.core.Point(20, waveformY - 50), 
+        new org.opencv.core.Point(frameWidth - 20, frameHeight - 20),
+        new Scalar(0, 0, 0, 128), -1); // Semi-transparent black
+      
+      // Draw grid lines
+      Scalar gridColor = new Scalar(64, 64, 64); // Dark gray
+      for (int i = 0; i < 5; i++) {
+        int y = waveformY - 40 + (i * 20);
+        Imgproc.line(frame, 
+          new org.opencv.core.Point(20, y), 
+          new org.opencv.core.Point(frameWidth - 20, y),
+          gridColor, 1);
+      }
+      
+      // Normalize waveform data
+      double minVal = waveform.stream().mapToDouble(d -> d).min().orElse(0);
+      double maxVal = waveform.stream().mapToDouble(d -> d).max().orElse(1);
+      double range = Math.max(maxVal - minVal, 1e-6);
+      
+      // Draw waveform
+      Scalar waveformColor = new Scalar(0, 255, 0); // Green waveform
+      org.opencv.core.Point prevPoint = null;
+      
+      int startIdx = Math.max(0, waveform.size() - maxPoints);
+      for (int i = startIdx; i < waveform.size(); i++) {
+        double normalizedValue = (waveform.get(i) - minVal) / range;
+        int x = 20 + (int)((double)(i - startIdx) * (frameWidth - 40) / maxPoints);
+        int y = waveformY - (int)(normalizedValue * 80) + 40; // Scale to fit in waveform area
+        
+        org.opencv.core.Point currentPoint = new org.opencv.core.Point(x, y);
+        
+        if (prevPoint != null) {
+          Imgproc.line(frame, prevPoint, currentPoint, waveformColor, 2);
+        }
+        prevPoint = currentPoint;
+      }
+      
+      // Draw waveform label
+      Imgproc.putText(frame, "rPPG Signal", 
+        new org.opencv.core.Point(30, waveformY - 55), 
+        Imgproc.FONT_HERSHEY_SIMPLEX, 0.6, new Scalar(255, 255, 255), 2);
+      
+    } catch (Exception e) {
+      Log.w(TAG, "Error drawing ECG waveform", e);
+    }
+  }
+
+  /**
    * Result container for rPPG processing
    */
   private static class RPPGProcessingResult {
@@ -552,5 +808,49 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
       this.maxBpm = maxBpm;
       this.averageBpm = averageBpm;
     }
+  }
+
+  /**
+   * Get the rotation of the video in degrees using MediaMetadataRetriever
+   */
+  private int getVideoRotation(String videoPath) {
+    MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+    try {
+      retriever.setDataSource(videoPath);
+      String rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+      return rotation != null ? Integer.parseInt(rotation) : 0;
+    } catch (Exception e) {
+      Log.w(TAG, "Failed to get video rotation", e);
+      return 0;
+    } finally {
+      try {
+        retriever.release();
+      } catch (Exception e) {
+        Log.w(TAG, "Failed to release MediaMetadataRetriever", e);
+      }
+    }
+  }
+
+  /**
+   * Rotate the frame to correct the orientation
+   */
+  private Mat rotateFrame(Mat frame, int rotationDegrees) {
+    Mat rotated = new Mat();
+    switch (rotationDegrees) {
+      case 90:
+        Core.transpose(frame, rotated);
+        Core.flip(rotated, rotated, 1);
+        break;
+      case 180:
+        Core.flip(frame, rotated, -1);
+        break;
+      case 270:
+        Core.transpose(frame, rotated);
+        Core.flip(rotated, rotated, 0);
+        break;
+      default:
+        return frame; // No rotation needed
+    }
+    return rotated;
   }
 }

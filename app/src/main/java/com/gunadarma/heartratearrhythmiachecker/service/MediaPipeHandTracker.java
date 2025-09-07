@@ -30,7 +30,6 @@ public class MediaPipeHandTracker {
     private HandLandmarker handLandmarker;
     private final Context context;
     private boolean isInitialized = false;
-    private static boolean mediaPipeNativeLoaded = false;
     private HandLandmarkerResult lastResult = null;
     private long lastProcessedTimestamp = 0;
     private LandmarkerListener handLandmarkerHelperListener = null;
@@ -44,15 +43,18 @@ public class MediaPipeHandTracker {
      * Initialize MediaPipe HandLandmarker with proper configuration
      */
     private void initializeMediaPipe() {
-        if (mediaPipeNativeLoaded) return;
+        if (isInitialized) return;
 
         final Float MIN_HAND_DETECTION_CONFIDENCE = 0.5f;
         final Float MIN_HAND_TRACKING_CONFIDENCE = 0.5f;
         final Float MIN_HAND_PRESENCE_CONFIDENCE = 0.5f;
         final Integer MAX_NUM_HANDS = 1;
-        final RunningMode RUNNING_MODE = RunningMode.LIVE_STREAM;
+        final RunningMode RUNNING_MODE = RunningMode.VIDEO;
 
         try {
+            // Initialize MediaPipe assets
+            // AndroidAssetUtil.initializeNativeAssetManager(context);
+
             var baseOpetionBuilder = BaseOptions.builder();
             baseOpetionBuilder.setDelegate(Delegate.GPU);
             baseOpetionBuilder.setModelAssetPath("mediapipe/hand_landmarker.task");
@@ -74,13 +76,19 @@ public class MediaPipeHandTracker {
             }
 
             this.handLandmarker = HandLandmarker.createFromOptions(context, optionBuilder.build());
+            this.isInitialized = true;
+            Log.i(TAG, "MediaPipe HandLandmarker initialized successfully");
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            Log.e(TAG, "Failed to initialize MediaPipe HandLandmarker", e);
+            this.isInitialized = false;
         }
     }
 
     // Return the landmark result to this HandLandmarkerHelper's caller
     private void returnLivestreamResult(HandLandmarkerResult result, MPImage input) {
+        // Cache the result for use in detectHand method
+        this.lastResult = result;
+
         long finishTimeMs = android.os.SystemClock.uptimeMillis();
         long inferenceTime = finishTimeMs - result.timestampMs();
 
@@ -108,7 +116,7 @@ public class MediaPipeHandTracker {
 
     /**
      * Detect hand in the given frame and return hand detection result
-     * For live stream mode, we use detectAsync and return the last cached result
+     * Uses LIVE_STREAM mode with async processing and cached results
      */
     public HandDetectionResult detectHand(Mat frame) {
         if (!isInitialized || handLandmarker == null) {
@@ -121,7 +129,7 @@ public class MediaPipeHandTracker {
             Bitmap bitmap = Bitmap.createBitmap(frame.cols(), frame.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(frame, bitmap);
 
-            // For live stream mode, use detectAsync with timestamp
+            // Create MPImage for MediaPipe processing
             MPImage image = new BitmapImageBuilder(bitmap).build();
             long timestamp = System.currentTimeMillis();
 

@@ -42,6 +42,11 @@ public class DetailFragment extends Fragment {
     private boolean isEditMode = false;
     private RecordEntry currentRecordEntry;
 
+    // Video switching variables
+    private boolean isShowingFinalVideo = false;
+    private File originalVideoFile;
+    private File finalVideoFile;
+
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         binding = FragmentDetailBinding.inflate(inflater, container, false);
@@ -173,16 +178,19 @@ public class DetailFragment extends Fragment {
 
                         // Set up video playback using the actual video file
                         try {
-                            File finalVideo = new File(
+                            finalVideoFile = new File(
                                 requireContext().getExternalFilesDir(null),
                                 String.format("%s/%s/%s", AppConstant.DATA_DIR, data.getId(), AppConstant.FINAL_VIDEO_NAME)
                             );
-                            File originalVideo = new File(
+                            originalVideoFile = new File(
                                 requireContext().getExternalFilesDir(null),
                                 String.format("%s/%s/%s", AppConstant.DATA_DIR, data.getId(), AppConstant.ORIGINAL_VIDEO_NAME)
                             );
 
-                            File videoToPlay = finalVideo.exists() ? finalVideo : originalVideo;
+                            // Initialize video switch pills based on available videos
+                            updateVideoSwitchPills();
+
+                            File videoToPlay = finalVideoFile.exists() ? finalVideoFile : originalVideoFile;
 
                             if (videoToPlay.exists()) {
                                 android.widget.MediaController mediaController = new android.widget.MediaController(requireContext());
@@ -191,13 +199,6 @@ public class DetailFragment extends Fragment {
 
                                 // Set audio attributes to not interfere with background playback
                                 binding.videoView.setAudioFocusRequest(android.media.AudioManager.AUDIOFOCUS_NONE);
-                                binding.videoView.setVideoPath(videoToPlay.getAbsolutePath());
-
-                                // Show first frame without starting playback
-                                binding.videoView.setOnPreparedListener(mp -> {
-                                    mp.setLooping(false);
-                                    binding.videoView.seekTo(1);
-                                });
 
                                 binding.videoView.setOnClickListener(v -> {
                                     if (binding.videoView.isPlaying()) {
@@ -315,6 +316,8 @@ public class DetailFragment extends Fragment {
 
                         // done processing refresh data
                         refreshEntryData();
+                        // Update video switch pills visibility after processing
+                        updateVideoSwitchPills();
                     });
                 } catch (Exception e) {
                     requireActivity().runOnUiThread(() -> {
@@ -325,6 +328,15 @@ public class DetailFragment extends Fragment {
                     });
                 }
             }).start();
+        });
+
+        // Setup video switch pill click handlers
+        binding.btnOriginalVideo.setOnClickListener(v -> {
+            switchToVideo(false); // Switch to original video
+        });
+
+        binding.btnFinalVideo.setOnClickListener(v -> {
+            switchToVideo(true); // Switch to final video
         });
     }
 
@@ -373,16 +385,7 @@ public class DetailFragment extends Fragment {
             if (binding.videoView != null) {
                 binding.videoView.stopPlayback();
                 try {
-                    File finalVideo = new File(
-                        requireContext().getExternalFilesDir(null),
-                        String.format("%s/%s/%s", AppConstant.DATA_DIR, currentRecordEntry.getId(), AppConstant.FINAL_VIDEO_NAME)
-                    );
-                    File originalVideo = new File(
-                        requireContext().getExternalFilesDir(null),
-                        String.format("%s/%s/%s", AppConstant.DATA_DIR, currentRecordEntry.getId(), AppConstant.ORIGINAL_VIDEO_NAME)
-                    );
-
-                    File videoToPlay = finalVideo.exists() ? finalVideo : originalVideo;
+                    File videoToPlay = finalVideoFile.exists() ? finalVideoFile : originalVideoFile;
 
                     if (videoToPlay.exists()) {
                         binding.videoView.setVideoPath(videoToPlay.getAbsolutePath());
@@ -419,6 +422,69 @@ public class DetailFragment extends Fragment {
                 Log.e("DetailFragment", "Failed to load heartbeats.jpg", e);
                 binding.graphView.setVisibility(View.GONE);
             }
+        }
+    }
+
+    private void switchToVideo(boolean showFinalVideo) {
+        isShowingFinalVideo = showFinalVideo;
+
+        File videoToPlay = showFinalVideo ? finalVideoFile : originalVideoFile;
+
+        if (videoToPlay != null && videoToPlay.exists()) {
+            // Stop current video playback
+            if (binding.videoView.isPlaying()) {
+                binding.videoView.stopPlayback();
+            }
+
+            binding.videoView.setVideoPath(videoToPlay.getAbsolutePath());
+            binding.videoContainer.setVisibility(View.VISIBLE);
+
+            // Show first frame without starting playback
+            binding.videoView.setOnPreparedListener(mp -> {
+                mp.setLooping(false);
+                binding.videoView.seekTo(1);
+            });
+        } else {
+            // If selected video doesn't exist, show a toast message
+            String videoType = showFinalVideo ? "Final" : "Original";
+            android.widget.Toast.makeText(requireContext(),
+                videoType + " video not available",
+                android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // Update pill selection states
+        updatePillSelection();
+    }
+
+    private void updatePillSelection() {
+        // Set selection states for the pills
+        binding.btnOriginalVideo.setSelected(!isShowingFinalVideo);
+        binding.btnFinalVideo.setSelected(isShowingFinalVideo);
+    }
+
+    private void updateVideoSwitchPills() {
+        // Check if both video files exist
+        boolean originalExists = originalVideoFile != null && originalVideoFile.exists();
+        boolean finalExists = finalVideoFile != null && finalVideoFile.exists();
+
+        // Show video switch container only if at least one video exists
+        if (originalExists || finalExists) {
+            binding.videoSwitchContainer.setVisibility(View.VISIBLE);
+
+            // Show/hide individual buttons based on file existence
+            binding.btnOriginalVideo.setVisibility(originalExists ? View.VISIBLE : View.GONE);
+            binding.btnFinalVideo.setVisibility(finalExists ? View.VISIBLE : View.GONE);
+
+            // Set initial video selection - prefer final if both exist
+            if (finalExists) {
+                switchToVideo(true);
+            } else if (originalExists) {
+                switchToVideo(false);
+            }
+        } else {
+            // Hide the entire switch container if no videos exist
+            binding.videoSwitchContainer.setVisibility(View.GONE);
         }
     }
 
