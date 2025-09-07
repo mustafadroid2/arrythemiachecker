@@ -49,7 +49,7 @@ public class MediaPipeHandTracker {
         final Float MIN_HAND_TRACKING_CONFIDENCE = 0.5f;
         final Float MIN_HAND_PRESENCE_CONFIDENCE = 0.5f;
         final Integer MAX_NUM_HANDS = 1;
-        final RunningMode RUNNING_MODE = RunningMode.VIDEO;
+        final RunningMode RUNNING_MODE = RunningMode.LIVE_STREAM;
 
         try {
             // Initialize MediaPipe assets
