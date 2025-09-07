@@ -27,12 +27,18 @@ import org.opencv.imgproc.Imgproc;
 public class MediaPipeHandTracker {
     private static final String TAG = "MediaPipeHandTracker";
 
-    private HandLandmarker handLandmarker;
     private final Context context;
-    private boolean isInitialized = false;
+    private HandLandmarker handLandmarker;
     private HandLandmarkerResult lastResult = null;
-    private long lastProcessedTimestamp = 0;
     private LandmarkerListener handLandmarkerHelperListener = null;
+    private boolean isInitialized = false;
+    private long lastProcessedTimestamp = 0;
+    private final Float MIN_HAND_DETECTION_CONFIDENCE = 0.5f;
+    private final Float MIN_HAND_TRACKING_CONFIDENCE = 0.5f;
+    private final Float MIN_HAND_PRESENCE_CONFIDENCE = 0.5f;
+    private final Integer MAX_NUM_HANDS = 1;
+    private final RunningMode RUNNING_MODE = RunningMode.LIVE_STREAM;
+
 
     public MediaPipeHandTracker(Context context) {
         this.context = context;
@@ -44,12 +50,6 @@ public class MediaPipeHandTracker {
      */
     private void initializeMediaPipe() {
         if (isInitialized) return;
-
-        final Float MIN_HAND_DETECTION_CONFIDENCE = 0.5f;
-        final Float MIN_HAND_TRACKING_CONFIDENCE = 0.5f;
-        final Float MIN_HAND_PRESENCE_CONFIDENCE = 0.5f;
-        final Integer MAX_NUM_HANDS = 1;
-        final RunningMode RUNNING_MODE = RunningMode.LIVE_STREAM;
 
         try {
             // Initialize MediaPipe assets
@@ -222,12 +222,35 @@ public class MediaPipeHandTracker {
 
         } catch (Exception e) {
             Log.w(TAG, "Could not calculate palm ROI, using fallback", e);
-            // Fallback: use center 60% of hand bounding box
-            int palmWidth = (int)(handBounds.width * 0.6);
-            int palmHeight = (int)(handBounds.height * 0.6);
-            int palmX = handBounds.x + (handBounds.width - palmWidth) / 2;
-            int palmY = handBounds.y + (handBounds.height - palmHeight) / 2;
+            return createFallbackPalmROI(handLandmarks, frame);
+        }
+    }
+
+    /**
+     * Create a fallback palm ROI using the center of the hand
+     */
+    private Rect createFallbackPalmROI(java.util.List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark> handLandmarks,
+                                      Mat frame) {
+        try {
+            // Use wrist and middle finger base to estimate palm center
+            var wrist = handLandmarks.get(0);
+            var middleBase = handLandmarks.get(9);
+
+            float centerX = (wrist.x() + middleBase.x()) / 2.0f * frame.cols();
+            float centerY = (wrist.y() + middleBase.y()) / 2.0f * frame.rows();
+
+            // Create a square ROI around the center
+            int roiSize = 80;
+            int palmX = Math.max(0, (int)(centerX - roiSize/2));
+            int palmY = Math.max(0, (int)(centerY - roiSize/2));
+            int palmWidth = Math.min(roiSize, frame.cols() - palmX);
+            int palmHeight = Math.min(roiSize, frame.rows() - palmY);
+
             return new Rect(palmX, palmY, palmWidth, palmHeight);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create fallback palm ROI", e);
+            return null;
         }
     }
 
