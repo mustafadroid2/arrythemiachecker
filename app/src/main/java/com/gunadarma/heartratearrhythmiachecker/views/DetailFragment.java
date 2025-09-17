@@ -175,11 +175,11 @@ public class DetailFragment extends Fragment {
                             binding.textPatientName.setTypeface(null, android.graphics.Typeface.NORMAL);
                         }
 
-                        binding.textHeartRate.setText("Heart Rate: " + data.getBeatsPerMinute());
+                        binding.textHeartRate.setText("Heart Rate: " + data.getBeatsPerMinute() + " bpm");
                         binding.editPatientName.setText(data.getPatientName());
                         binding.textNotes.setText("Notes: " + (data.getNotes() != null ? data.getNotes() : ""));
                         binding.editNotes.setText(data.getNotes() != null ? data.getNotes() : "");
-                        binding.textDuration.setText("Duration: " + data.getDuration());
+                        binding.textDuration.setText("Duration: " + data.getDuration() + " seconds");
 
                         // Set up video playback using the actual video file
                         try {
@@ -289,50 +289,54 @@ public class DetailFragment extends Fragment {
 
         // Add process button click handler
         binding.btnProcess.setOnClickListener(v -> {
-            // Show loading indicator
-            android.app.ProgressDialog progressDialog = new android.app.ProgressDialog(requireContext());
-            progressDialog.setMessage("Processing video...");
-            progressDialog.setCancelable(false);
-            progressDialog.show();
+            if (currentRecordEntry == null) {
+                android.widget.Toast.makeText(requireContext(),
+                    "No record available to process",
+                    android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
 
-            // Create and run processing task
-            new Thread(() -> {
-                try {
-                    MainMediaProcessingServiceImpl mediaProcessingService = new MainMediaProcessingServiceImpl(requireContext());
-                    mediaProcessingService.createHeartBeatsVideo(currentRecordEntry);
-
-                    // Update record status after processing
-                    if (currentRecordEntry != null) {
-                        DataRecordServiceImpl dataRecordService = new DataRecordServiceImpl(requireContext());
-                        dataRecordService.saveData(currentRecordEntry);
+            // Use shared video processing utility
+            com.gunadarma.heartratearrhythmiachecker.util.VideoProcessingUtil.processVideo(currentRecordEntry,
+                new com.gunadarma.heartratearrhythmiachecker.util.VideoProcessingUtil.ProcessingCallback() {
+                    @Override
+                    public void onProgressUpdate(int progress, String message) {
+                        // Progress updates are handled internally by the utility
                     }
 
-                    // Update UI on completion
-                    requireActivity().runOnUiThread(() -> {
-                        progressDialog.dismiss();
-                        // Refresh the status display
+                    @Override
+                    public void onSuccess() {
+                        // Update status display and refresh data
                         if (currentRecordEntry != null) {
                             binding.textStatus.setText(currentRecordEntry.getStatus().getValue());
                         }
-                        // Show success message
-                        android.widget.Toast.makeText(requireContext(),
-                            "Video processing completed",
-                            android.widget.Toast.LENGTH_SHORT).show();
-
-                        // done processing refresh data
+                        // Refresh entry data to show updated videos and graphs
                         refreshEntryData();
                         // Update video switch pills visibility after processing
                         updateVideoSwitchPills();
-                    });
-                } catch (Exception e) {
-                    requireActivity().runOnUiThread(() -> {
-                        progressDialog.dismiss();
-                        android.widget.Toast.makeText(requireContext(),
-                            "Error processing video: " + e.getMessage(),
-                            android.widget.Toast.LENGTH_LONG).show();
-                    });
-                }
-            }).start();
+                    }
+
+                    @Override
+                    public void onError(Exception error) {
+                        // Show error dialog with retry option
+                        com.gunadarma.heartratearrhythmiachecker.util.VideoProcessingUtil.showProcessingErrorDialog(
+                            requireContext(),
+                            error,
+                            () -> binding.btnProcess.performClick(), // Retry
+                            null // No view details action needed in detail fragment
+                        );
+                    }
+
+                    @Override
+                    public void runOnUiThread(Runnable runnable) {
+                        requireActivity().runOnUiThread(runnable);
+                    }
+
+                    @Override
+                    public android.content.Context getContext() {
+                        return requireContext();
+                    }
+                });
         });
 
         binding.btnToggleVideo.setOnClickListener(v -> {
@@ -412,7 +416,7 @@ public class DetailFragment extends Fragment {
             }
             binding.editNotes.setText(currentRecordEntry.getNotes() != null ? currentRecordEntry.getNotes() : "");
 
-            binding.textDuration.setText("Duration: " + currentRecordEntry.getDuration());
+            binding.textDuration.setText("Duration: " + currentRecordEntry.getDuration() + " seconds");
 
             // refresh video
             if (binding.videoView != null) {

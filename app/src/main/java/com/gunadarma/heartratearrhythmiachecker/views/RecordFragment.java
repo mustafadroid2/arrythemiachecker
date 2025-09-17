@@ -220,25 +220,67 @@ public class RecordFragment extends Fragment {
         });
 
         // Process button click (tray)
-        MainMediaProcessingServiceImpl mediaProcessingService = new MainMediaProcessingServiceImpl(requireContext());
         binding.btnProcess.setOnClickListener(v -> {
             // First create and save the record entry
             if (currentRecordID > 0) {
-                // Execute database operation in background thread
-                new Thread(() -> {
-                    dataRecordService.saveData(
-                        RecordEntry.builder()
-                            .id(currentRecordID)
-                            .patientName("")
-                            .createAt(System.currentTimeMillis())
-                            .status(RecordEntry.Status.UNCHECKED)
-                            .build()
-                    );
-                    // Navigate on UI thread after save is complete
-                    requireActivity().runOnUiThread(this::navigateToDetailFragment);
-                }).start();
+                // Disable process button to prevent multiple clicks
+                binding.btnProcess.setEnabled(false);
+                binding.btnProcess.setText("Processing...");
+
+                // Create record entry
+                RecordEntry recordEntry = RecordEntry.builder()
+                    .id(currentRecordID)
+                    .patientName("")
+                    .createAt(System.currentTimeMillis())
+                    .status(RecordEntry.Status.UNCHECKED)
+                    .build();
+
+                // Use shared video processing utility
+                com.gunadarma.heartratearrhythmiachecker.util.VideoProcessingUtil.processVideo(recordEntry,
+                    new com.gunadarma.heartratearrhythmiachecker.util.VideoProcessingUtil.ProcessingCallback() {
+                        @Override
+                        public void onProgressUpdate(int progress, String message) {
+                            // Progress updates are handled internally by the utility
+                        }
+
+                        @Override
+                        public void onSuccess() {
+                            // Re-enable button and navigate to detail fragment
+                            binding.btnProcess.setEnabled(true);
+                            binding.btnProcess.setText("Process");
+                            navigateToDetailFragment();
+                        }
+
+                        @Override
+                        public void onError(Exception error) {
+                            // Re-enable the process button
+                            binding.btnProcess.setEnabled(true);
+                            binding.btnProcess.setText("Process");
+
+                            // Show error dialog with retry option
+                            com.gunadarma.heartratearrhythmiachecker.util.VideoProcessingUtil.showProcessingErrorDialog(
+                                requireContext(),
+                                error,
+                                () -> binding.btnProcess.performClick(), // Retry
+                                () -> navigateToDetailFragment() // View details
+                            );
+                        }
+
+                        @Override
+                        public void runOnUiThread(Runnable runnable) {
+                            requireActivity().runOnUiThread(runnable);
+                        }
+
+                        @Override
+                        public android.content.Context getContext() {
+                            return requireContext();
+                        }
+                    });
             } else {
-                System.out.println("Unexpected process");
+                android.util.Log.e("RecordFragment", "Invalid currentRecordID: " + currentRecordID);
+                android.widget.Toast.makeText(requireContext(),
+                    "Invalid record ID. Please try recording again.",
+                    android.widget.Toast.LENGTH_SHORT).show();
             }
         });
     }

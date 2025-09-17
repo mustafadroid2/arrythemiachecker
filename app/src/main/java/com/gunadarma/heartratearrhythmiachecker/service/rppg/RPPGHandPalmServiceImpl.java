@@ -31,32 +31,30 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
   // Store signal history for ECG graph visualization
   private List<Double> signalHistory = new ArrayList<>();
-  private List<Double> processedSignalHistory = new ArrayList<>(); // For ECG-like processed signal
   // Add synchronized timestamp tracking for ECG waveform
   private List<Long> signalTimestamps = new ArrayList<>();
-  private List<Integer> detectedHeartbeatFrames = new ArrayList<>(); // Frame indices of detected heartbeats
   private static final int MAX_SIGNAL_HISTORY = 300; // Keep last 300 samples (10 seconds at 30fps)
 
-  // rPPG signal processing variables
-  private List<Double> rawSignalBuffer = new ArrayList<>(); // Buffer for raw signals
-  private double signalBaseline = 0.0; // Running baseline
-  private int frameCounter = 0;
 
   // Signal projection and continuity variables
   private List<Double> continuousSignalBuffer = new ArrayList<>();
   private List<Long> continuousTimestamps = new ArrayList<>();
   private Double lastValidSignal = null;
-  private Long lastValidTimestamp = null;
+  private Long lastValidTimestamp;
+
   private double signalTrend = 0.0; // Track signal trend for projection
   private double averageHeartRate = 70.0; // Default HR for projection
   private int missedFrameCount = 0;
   private static final int MAX_INTERPOLATION_FRAMES = 15; // Max frames to interpolate (0.5 seconds at 30fps)
 
   // Signal quality tracking
-  private List<Double> recentSignalQuality = new ArrayList<>();
   private double runningMean = 0.0;
   private double runningVariance = 0.0;
-  private int qualityWindowSize = 30;
+
+  // BPM history for smoothing
+  private List<Double> bpmHistory = new ArrayList<>();
+  private static final int BPM_HISTORY_SIZE = 10;
+  private double lastStableBPM = 0.0;
 
   public RPPGHandPalmServiceImpl(Context context) {
     this.context = context;
@@ -362,23 +360,28 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
     double heartRatePeriod = 60.0 / averageHeartRate; // seconds per beat
     double phase = (timeDelta % heartRatePeriod) / heartRatePeriod * 2 * Math.PI;
 
-    // Create realistic heart rate signal with slight variations
+    // Create realistic heart rate signal with controlled amplitude variations
     double baseSignal = lastValidSignal;
-    double heartRateComponent = 15.0 * Math.sin(phase) + 5.0 * Math.sin(2 * phase);
 
-    // Add natural variation and breathing artifacts
-    double breathingComponent = 3.0 * Math.sin(timeDelta * 2 * Math.PI / 4.0); // 4-second breathing cycle
-    double noiseComponent = 2.0 * (Math.random() - 0.5); // Small random noise
+    // Reduced amplitude heart rate component to prevent jumps
+    double heartRateComponent = 5.0 * Math.sin(phase) + 2.0 * Math.sin(2 * phase);
 
-    // Apply gradual decay to projection confidence
-    double decayFactor = Math.exp(-missedFrameCount * 0.1);
+    // Minimal breathing component
+    double breathingComponent = 1.5 * Math.sin(timeDelta * 2 * Math.PI / 4.0);
 
+    // Reduced noise component
+    double noiseComponent = 1.0 * (Math.random() - 0.5);
+
+    // Strong decay to return to baseline quickly
+    double decayFactor = Math.exp(-missedFrameCount * 0.3);
+
+    // Calculate projected value with all components
     double projectedValue = baseSignal +
                           (heartRateComponent + breathingComponent + noiseComponent) * decayFactor +
-                          signalTrend * timeDelta * decayFactor;
+                          signalTrend * timeDelta * decayFactor * 0.5; // Reduced trend influence
 
-    // Ensure realistic bounds
-    return Math.max(80, Math.min(200, projectedValue));
+    // Ensure realistic bounds with tighter constraints
+    return Math.max(lastValidSignal - 20, Math.min(lastValidSignal + 20, projectedValue));
   }
 
   /**
@@ -456,7 +459,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
   }
 
   /**
-   * Update heart rate estimate based on continuous signal
+   * Update heart rate estimate based on continuous signal - IMPROVED WITH SMOOTHING
    */
   private void updateHeartRateEstimate() {
     if (continuousSignalBuffer.size() < 60) return;
@@ -470,15 +473,84 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
       double estimatedBPM = estimateCurrentBPM(recentSignals, 30.0);
 
       if (estimatedBPM > 40 && estimatedBPM < 200) {
-        // Apply smoothing to prevent abrupt changes
-        double alpha = 0.3; // Smoothing factor
-        averageHeartRate = alpha * estimatedBPM + (1 - alpha) * averageHeartRate;
+        // Add to BPM history for temporal smoothing
+        bpmHistory.add(estimatedBPM);
+        
+        // Maintain BPM history size
+        while (bpmHistory.size() > BPM_HISTORY_SIZE) {
+          bpmHistory.remove(0);
+        }
+        
+        // Calculate smoothed BPM from history
+        double smoothedBPM = calculateSmoothedBPM();
+        
+        // Apply additional exponential smoothing to prevent jumps
+        double alpha = 0.2; // More conservative smoothing
+        averageHeartRate = alpha * smoothedBPM + (1 - alpha) * averageHeartRate;
+        
+        // Update stable BPM with even more conservative approach
+        if (Math.abs(smoothedBPM - lastStableBPM) < 15) { // Only update if change is < 15 BPM
+          lastStableBPM = 0.8 * lastStableBPM + 0.2 * smoothedBPM;
+        }
 
-        Log.d(TAG, String.format("Updated heart rate estimate: %.1f BPM (smoothed: %.1f)",
-                                 estimatedBPM, averageHeartRate));
+        Log.d(TAG, String.format("BPM estimate: %.1f -> smoothed: %.1f -> final: %.1f",
+                                 estimatedBPM, smoothedBPM, averageHeartRate));
       }
     } catch (Exception e) {
       Log.w(TAG, "Failed to update heart rate estimate", e);
+    }
+  }
+
+  /**
+   * Calculate smoothed BPM from history to prevent jumps
+   */
+  private double calculateSmoothedBPM() {
+    if (bpmHistory.isEmpty()) return averageHeartRate;
+    
+    if (bpmHistory.size() == 1) return bpmHistory.get(0);
+    
+    // Remove outliers from BPM history
+    List<Double> filteredBPM = new ArrayList<>();
+    double median = calculateMedian(new ArrayList<>(bpmHistory));
+    
+    for (Double bpm : bpmHistory) {
+      // Only keep BPM values within 25% of median
+      if (Math.abs(bpm - median) <= median * 0.25) {
+        filteredBPM.add(bpm);
+      }
+    }
+    
+    // If too many outliers removed, use original history
+    if (filteredBPM.size() < bpmHistory.size() / 2) {
+      filteredBPM = new ArrayList<>(bpmHistory);
+    }
+    
+    // Calculate weighted average (more recent values have higher weight)
+    double weightedSum = 0;
+    double totalWeight = 0;
+    
+    for (int i = 0; i < filteredBPM.size(); i++) {
+      double weight = Math.pow(1.2, i); // Exponential weighting
+      weightedSum += filteredBPM.get(i) * weight;
+      totalWeight += weight;
+    }
+    
+    return totalWeight > 0 ? weightedSum / totalWeight : averageHeartRate;
+  }
+
+  /**
+   * Calculate median value from list
+   */
+  private double calculateMedian(List<Double> values) {
+    if (values.isEmpty()) return 0;
+    
+    values.sort(Double::compareTo);
+    int size = values.size();
+    
+    if (size % 2 == 0) {
+      return (values.get(size/2 - 1) + values.get(size/2)) / 2.0;
+    } else {
+      return values.get(size/2);
     }
   }
 
@@ -664,7 +736,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
       // Display status in larger text at top right
       Scalar statusColor = isPalmDetected ? new Scalar(0, 255, 0) : new Scalar(0, 200, 200);
-      Imgproc.putText(frame, "rPPG: " + detectionStatus, new Point(frameWidth - 250, 50),
+      Imgproc.putText(frame, "rPPG: " + detectionStatus, new Point(frameWidth - 300, 50),
                      fontFace, 1.0, statusColor, 3);
 
       // Draw ECG-style graph at the bottom of the frame
@@ -724,6 +796,14 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
       double averageBpm = bpmValues.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
       double minBpm = bpmValues.stream().mapToDouble(Double::doubleValue).min().orElse(0.0);
       double maxBpm = bpmValues.stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
+
+      // Update the real-time heart rate estimate to match the final calculated value
+      // This ensures synchronization between video overlay and final results
+      averageHeartRate = averageBpm;
+      lastStableBPM = averageBpm;
+
+      Log.d(TAG, String.format("Synchronized heart rate estimates: real-time=%.1f, calculated=%.1f",
+                               averageHeartRate, averageBpm));
 
       // Create signal list
       List<RPPGData.Signal> signalList = new ArrayList<>();
