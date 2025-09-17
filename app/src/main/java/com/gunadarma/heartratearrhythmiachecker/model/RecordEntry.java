@@ -31,6 +31,9 @@ public class RecordEntry {
     @ColumnInfo(name = "heartbeats")
     private List<Long> heartbeats; // list of timestamps for each heartbeat
 
+    private Integer age = null; // patient's age, nullable
+    private String address = ""; // patient's address, nullable, default empty string
+
     @Getter
     public enum Status {
         UNCHECKED("Unchecked"),
@@ -57,5 +60,17 @@ public class RecordEntry {
 
     public void setBeatsPerMinute(int beatsPerMinute) {
         this.beatsPerMinute = beatsPerMinute;
+    }
+    public Integer getAge() {
+        return age;
+    }
+    public void setAge(Integer age) {
+        this.age = age;
+    }
+    public String getAddress() {
+        return address == null ? "" : address;
+    }
+    public void setAddress(String address) {
+        this.address = address == null ? "" : address;
     }
 }

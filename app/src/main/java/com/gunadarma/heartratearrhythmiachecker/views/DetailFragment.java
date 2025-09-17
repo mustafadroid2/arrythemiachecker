@@ -114,6 +114,11 @@ public class DetailFragment extends Fragment {
                 currentRecordEntry.setPatientName(binding.editPatientName.getText().toString());
                 currentRecordEntry.setNotes(binding.editNotes.getText().toString());
 
+                // Update age and address
+                String ageStr = binding.editAge.getText().toString();
+                currentRecordEntry.setAge(ageStr.isEmpty() ? null : Integer.valueOf(ageStr));
+                currentRecordEntry.setAddress(binding.editAddress.getText().toString());
+
                 // Save in background thread
                 new Thread(() -> {
                     DataRecordServiceImpl dataRecordService = new DataRecordServiceImpl(requireContext());
@@ -330,13 +335,10 @@ public class DetailFragment extends Fragment {
             }).start();
         });
 
-        // Setup video switch pill click handlers
-        binding.btnOriginalVideo.setOnClickListener(v -> {
-            switchToVideo(false); // Switch to original video
-        });
-
-        binding.btnFinalVideo.setOnClickListener(v -> {
-            switchToVideo(true); // Switch to final video
+        binding.btnToggleVideo.setOnClickListener(v -> {
+            isShowingFinalVideo = !isShowingFinalVideo;
+            switchToVideo(isShowingFinalVideo);
+            updateToggleButtonText();
         });
     }
 
@@ -361,14 +363,19 @@ public class DetailFragment extends Fragment {
 
         binding.editPatientName.setVisibility(editVisibility);
         binding.editNotes.setVisibility(editVisibility);
+        binding.editAge.setVisibility(editVisibility);
+        binding.editAddress.setVisibility(editVisibility);
 
         binding.textPatientName.setVisibility(textVisibility);
         binding.textNotes.setVisibility(textVisibility);
+        binding.textAge.setVisibility(textVisibility);
+        binding.textAddress.setVisibility(textVisibility);
         binding.textDuration.setVisibility(textVisibility);
     }
 
     private void refreshEntryData() {
         if (currentRecordEntry != null) {
+            // Patient Name
             binding.textPatientName.setText("Patient name: " + AppUtil.patientNameOrDefault(currentRecordEntry));
             binding.editPatientName.setText(currentRecordEntry.getPatientName());
             if (currentRecordEntry.getPatientName() == null || currentRecordEntry.getPatientName().isEmpty()) {
@@ -376,9 +383,35 @@ public class DetailFragment extends Fragment {
             } else {
                 binding.textPatientName.setTypeface(null, android.graphics.Typeface.NORMAL);
             }
+            binding.textPatientName.setVisibility((currentRecordEntry.getPatientName() == null || currentRecordEntry.getPatientName().isEmpty()) ? View.GONE : View.VISIBLE);
 
-            binding.textNotes.setText("Notes: " + (currentRecordEntry.getNotes() != null ? currentRecordEntry.getNotes() : ""));
+            // Age
+            if (currentRecordEntry.getAge() != null) {
+                binding.textAge.setText("Age: " + currentRecordEntry.getAge());
+                binding.textAge.setVisibility(View.VISIBLE);
+            } else {
+                binding.textAge.setVisibility(View.GONE);
+            }
+            binding.editAge.setText(currentRecordEntry.getAge() != null ? String.valueOf(currentRecordEntry.getAge()) : "");
+
+            // Address
+            if (currentRecordEntry.getAddress() != null && !currentRecordEntry.getAddress().isEmpty()) {
+                binding.textAddress.setText("Address: " + currentRecordEntry.getAddress());
+                binding.textAddress.setVisibility(View.VISIBLE);
+            } else {
+                binding.textAddress.setVisibility(View.GONE);
+            }
+            binding.editAddress.setText(currentRecordEntry.getAddress() != null ? currentRecordEntry.getAddress() : "");
+
+            // Notes
+            if (currentRecordEntry.getNotes() != null && !currentRecordEntry.getNotes().isEmpty()) {
+                binding.textNotes.setText("Notes: " + currentRecordEntry.getNotes());
+                binding.textNotes.setVisibility(View.VISIBLE);
+            } else {
+                binding.textNotes.setVisibility(View.GONE);
+            }
             binding.editNotes.setText(currentRecordEntry.getNotes() != null ? currentRecordEntry.getNotes() : "");
+
             binding.textDuration.setText("Duration: " + currentRecordEntry.getDuration());
 
             // refresh video
@@ -453,38 +486,25 @@ public class DetailFragment extends Fragment {
             return;
         }
 
-        // Update pill selection states
-        updatePillSelection();
+        updateToggleButtonText();
     }
 
-    private void updatePillSelection() {
-        // Set selection states for the pills
-        binding.btnOriginalVideo.setSelected(!isShowingFinalVideo);
-        binding.btnFinalVideo.setSelected(isShowingFinalVideo);
+    private void updateToggleButtonText() {
+        if (binding.btnToggleVideo != null) {
+            binding.btnToggleVideo.setText(isShowingFinalVideo ? "Original" : "Final");
+        }
     }
 
     private void updateVideoSwitchPills() {
-        // Check if both video files exist
+        // Replaced by single toggle button logic
         boolean originalExists = originalVideoFile != null && originalVideoFile.exists();
         boolean finalExists = finalVideoFile != null && finalVideoFile.exists();
-
-        // Show video switch container only if at least one video exists
-        if (originalExists || finalExists) {
-            binding.videoSwitchContainer.setVisibility(View.VISIBLE);
-
-            // Show/hide individual buttons based on file existence
-            binding.btnOriginalVideo.setVisibility(originalExists ? View.VISIBLE : View.GONE);
-            binding.btnFinalVideo.setVisibility(finalExists ? View.VISIBLE : View.GONE);
-
-            // Set initial video selection - prefer final if both exist
-            if (finalExists) {
-                switchToVideo(true);
-            } else if (originalExists) {
-                switchToVideo(false);
-            }
-        } else {
-            // Hide the entire switch container if no videos exist
-            binding.videoSwitchContainer.setVisibility(View.GONE);
+        binding.btnToggleVideo.setVisibility((originalExists || finalExists) ? View.VISIBLE : View.GONE);
+        // Set initial video selection - prefer final if both exist
+        if (finalExists) {
+            switchToVideo(true);
+        } else if (originalExists) {
+            switchToVideo(false);
         }
     }
 
