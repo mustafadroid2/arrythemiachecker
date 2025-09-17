@@ -11,7 +11,7 @@ import com.gunadarma.heartratearrhythmiachecker.util.Converters;
 
 @Database(
     entities = {RecordEntry.class},
-    version = 2, // incremented from 1 to 2 due to schema change
+    version = 3, // incremented from 1 to 2 due to schema change
     exportSchema = false
 )
 @TypeConverters({Converters.class})

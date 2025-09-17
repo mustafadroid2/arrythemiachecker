@@ -31,8 +31,9 @@ public class RecordEntry {
     @ColumnInfo(name = "heartbeats")
     private List<Long> heartbeats; // list of timestamps for each heartbeat
 
-    private Integer age = null; // patient's age, nullable
-    private String address = ""; // patient's address, nullable, default empty string
+    private Integer age; // patient's age, nullable
+    private String gender; // patient's address, nullable, default empty string
+    private String address; // patient's address, nullable, default empty string
 
     @Getter
     public enum Status {
@@ -54,19 +55,6 @@ public class RecordEntry {
         }
     }
 
-    public int getBeatsPerMinute() {
-        return beatsPerMinute;
-    }
-
-    public void setBeatsPerMinute(int beatsPerMinute) {
-        this.beatsPerMinute = beatsPerMinute;
-    }
-    public Integer getAge() {
-        return age;
-    }
-    public void setAge(Integer age) {
-        this.age = age;
-    }
     public String getAddress() {
         return address == null ? "" : address;
     }

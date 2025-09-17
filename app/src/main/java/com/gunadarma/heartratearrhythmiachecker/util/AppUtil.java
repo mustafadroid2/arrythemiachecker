@@ -7,6 +7,14 @@ import java.util.Date;
 import java.util.Locale;
 
 public class AppUtil {
+  public static String toDetailDate(long timestamp) {
+    if (timestamp <= 0) return "N/A";
+
+    Date dateObject = new Date(timestamp);
+    SimpleDateFormat dateFormat = new SimpleDateFormat("dd MMM yyyy, HH:mm:ss", Locale.getDefault()); // HH:mm:ss
+    return dateFormat.format(dateObject);
+  }
+
   public static String toDate(long timestamp) {
     if (timestamp <= 0) return "N/A";
 

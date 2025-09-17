@@ -78,6 +78,19 @@ public class DetailFragment extends Fragment {
     public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
+        // Setup pull-to-refresh
+        binding.swipeRefreshLayout.setOnRefreshListener(() -> {
+            refreshData();
+        });
+
+        // Configure refresh colors
+        binding.swipeRefreshLayout.setColorSchemeResources(
+            android.R.color.holo_blue_bright,
+            android.R.color.holo_green_light,
+            android.R.color.holo_orange_light,
+            android.R.color.holo_red_light
+        );
+
         // Log getArguments() as JSON
         Bundle args = getArguments();
         if (args != null) {
@@ -119,6 +132,15 @@ public class DetailFragment extends Fragment {
                 currentRecordEntry.setAge(ageStr.isEmpty() ? null : Integer.valueOf(ageStr));
                 currentRecordEntry.setAddress(binding.editAddress.getText().toString());
 
+                // Update gender based on radio button selection
+                String selectedGender = null;
+                if (binding.radioMale.isChecked()) {
+                    selectedGender = "Male";
+                } else if (binding.radioFemale.isChecked()) {
+                    selectedGender = "Female";
+                }
+                currentRecordEntry.setGender(selectedGender);
+
                 // Save in background thread
                 new Thread(() -> {
                     DataRecordServiceImpl dataRecordService = new DataRecordServiceImpl(requireContext());
@@ -159,7 +181,7 @@ public class DetailFragment extends Fragment {
                     currentRecordEntry = data;
                     if (data != null) {
                         requireActivity().setTitle(String.format("Detail #%s", currentRecordEntry.getId()));
-                        binding.textId.setText(AppUtil.toDate(data.getCreateAt()));
+                        binding.textId.setText(AppUtil.toDetailDate(data.getCreateAt()));
                         binding.textId.setTypeface(null, android.graphics.Typeface.BOLD);
                         binding.textId.setTextSize(14);
                         // adjust textId text color to gray
@@ -370,11 +392,15 @@ public class DetailFragment extends Fragment {
         binding.editAge.setVisibility(editVisibility);
         binding.editAddress.setVisibility(editVisibility);
 
+        // Show/hide gender radio group in edit mode
+        binding.radioGroupGender.setVisibility(editVisibility);
+
         binding.textPatientName.setVisibility(textVisibility);
         binding.textNotes.setVisibility(textVisibility);
         binding.textAge.setVisibility(textVisibility);
         binding.textAddress.setVisibility(textVisibility);
         binding.textDuration.setVisibility(textVisibility);
+        binding.textGender.setVisibility(textVisibility);
     }
 
     private void refreshEntryData() {
@@ -385,7 +411,6 @@ public class DetailFragment extends Fragment {
             if (currentRecordEntry.getPatientName() == null || currentRecordEntry.getPatientName().isEmpty()) {
                 binding.textPatientName.setTypeface(null, android.graphics.Typeface.ITALIC);
             } else {
-                binding.textPatientName.setTypeface(null, android.graphics.Typeface.NORMAL);
             }
             binding.textPatientName.setVisibility((currentRecordEntry.getPatientName() == null || currentRecordEntry.getPatientName().isEmpty()) ? View.GONE : View.VISIBLE);
 
@@ -397,6 +422,17 @@ public class DetailFragment extends Fragment {
                 binding.textAge.setVisibility(View.GONE);
             }
             binding.editAge.setText(currentRecordEntry.getAge() != null ? String.valueOf(currentRecordEntry.getAge()) : "");
+
+            // Gender
+            if (currentRecordEntry.getGender() != null && !currentRecordEntry.getGender().isEmpty()) {
+                binding.textGender.setText("Gender: " + currentRecordEntry.getGender());
+                binding.textGender.setVisibility(View.VISIBLE);
+            } else {
+                binding.textGender.setVisibility(View.GONE);
+            }
+            // Set radio button selection based on current gender
+            binding.radioMale.setChecked("Male".equals(currentRecordEntry.getGender()));
+            binding.radioFemale.setChecked("Female".equals(currentRecordEntry.getGender()));
 
             // Address
             if (currentRecordEntry.getAddress() != null && !currentRecordEntry.getAddress().isEmpty()) {
@@ -459,6 +495,71 @@ public class DetailFragment extends Fragment {
                 Log.e("DetailFragment", "Failed to load heartbeats.jpg", e);
                 binding.graphView.setVisibility(View.GONE);
             }
+        }
+    }
+
+    private void refreshData() {
+        Bundle args = getArguments();
+        if (args != null && args.containsKey("id")) {
+            String dataId = String.valueOf(args.get("id"));
+
+            // Show refresh indicator
+            binding.swipeRefreshLayout.setRefreshing(true);
+
+            new Thread(() -> {
+                try {
+                    // Reload record data from database
+                    DataRecordServiceImpl dataRecordService = new DataRecordServiceImpl(requireContext());
+                    final RecordEntry data = dataRecordService.get(dataId);
+
+                    requireActivity().runOnUiThread(() -> {
+                        currentRecordEntry = data;
+                        if (data != null) {
+                            // Update title
+                            requireActivity().setTitle(String.format("Detail #%s", currentRecordEntry.getId()));
+
+                            // Update basic info
+                            binding.textId.setText(AppUtil.toDetailDate(data.getCreateAt()));
+                            binding.textStatus.setText(data.getStatus().getValue());
+                            binding.textHeartRate.setText("Heart Rate: " + data.getBeatsPerMinute() + " bpm");
+                            binding.textDuration.setText("Duration: " + data.getDuration() + " seconds");
+
+                            // Refresh all entry data including age, gender, address
+                            refreshEntryData();
+
+                            // Reload video files
+                            finalVideoFile = new File(
+                                requireContext().getExternalFilesDir(null),
+                                String.format("%s/%s/%s", AppConstant.DATA_DIR, data.getId(), AppConstant.FINAL_VIDEO_NAME)
+                            );
+                            originalVideoFile = new File(
+                                requireContext().getExternalFilesDir(null),
+                                String.format("%s/%s/%s", AppConstant.DATA_DIR, data.getId(), AppConstant.ORIGINAL_VIDEO_NAME)
+                            );
+
+                            // Update video display
+                            updateVideoSwitchPills();
+
+                            android.widget.Toast.makeText(requireContext(), "Data refreshed", android.widget.Toast.LENGTH_SHORT).show();
+                        } else {
+                            android.widget.Toast.makeText(requireContext(), "Record not found", android.widget.Toast.LENGTH_SHORT).show();
+                        }
+
+                        // Hide refresh indicator
+                        binding.swipeRefreshLayout.setRefreshing(false);
+                    });
+                } catch (Exception e) {
+                    Log.e("DetailFragment", "Error refreshing data", e);
+                    requireActivity().runOnUiThread(() -> {
+                        binding.swipeRefreshLayout.setRefreshing(false);
+                        android.widget.Toast.makeText(requireContext(), "Failed to refresh", android.widget.Toast.LENGTH_SHORT).show();
+                    });
+                }
+            }).start();
+        } else {
+            // No data to refresh
+            binding.swipeRefreshLayout.setRefreshing(false);
+            android.widget.Toast.makeText(requireContext(), "No data to refresh", android.widget.Toast.LENGTH_SHORT).show();
         }
     }
 
