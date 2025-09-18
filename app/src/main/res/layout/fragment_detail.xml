@@ -44,21 +44,6 @@
                             app:layout_constraintStart_toStartOf="parent"
                             app:layout_constraintEnd_toEndOf="parent"/>
 
-                        <!-- Floating Video Switch Toggle -->
-                        <Button
-                            android:id="@+id/btnToggleVideo"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Final"
-                            android:textSize="12sp"
-                            android:layout_marginStart="12dp"
-                            android:layout_marginEnd="12dp"
-                            android:layout_marginBottom="100dp"
-                            android:background="@drawable/video_switch_background"
-                            android:elevation="8dp"
-                            app:layout_constraintBottom_toBottomOf="parent"
-                            app:layout_constraintStart_toStartOf="parent" />
-
                     </androidx.constraintlayout.widget.ConstraintLayout>
                 </androidx.constraintlayout.widget.ConstraintLayout>
 
@@ -310,6 +295,21 @@
             app:backgroundTint="#4CAF50"
             app:tint="#FFFFFF"
             app:srcCompat="@android:drawable/ic_menu_save"/>
+
+        <!-- Floating Video Switch Toggle -->
+        <Button
+            android:id="@+id/btnToggleVideo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Final"
+            android:textSize="12sp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="100dp"
+            android:background="@drawable/video_switch_background"
+            android:elevation="8dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent" />
 
         <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/btnEdit"

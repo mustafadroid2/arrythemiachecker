@@ -33,11 +33,8 @@ public class RPPGHeadFaceServiceImpl implements RPPGService {
   private CascadeClassifier faceDetector;
 
   // rPPG processing constants
-  private static final double MIN_HR_BPM = 50.0;
-  private static final double MAX_HR_BPM = 180.0;
   private static final double BANDPASS_LOW_FREQ = 0.83; // 50 BPM in Hz
   private static final double BANDPASS_HIGH_FREQ = 3.0; // 180 BPM in Hz
-  private static final int WINDOW_SIZE_SECONDS = 6; // Processing window size
   private static final double PEAK_THRESHOLD = 0.3;
 
   public RPPGHeadFaceServiceImpl(Context context) {

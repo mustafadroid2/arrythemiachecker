@@ -152,6 +152,11 @@ public class DetailFragment extends Fragment {
                         binding.btnSaveFloat.setVisibility(View.GONE);
                         binding.btnCancel.setVisibility(View.GONE);
                         binding.btnEdit.setVisibility(View.VISIBLE);
+
+                        // Hide keyboard
+                        android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager)
+                            requireActivity().getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+
                         refreshEntryData();
                         android.widget.Toast.makeText(requireContext(), "Updated", android.widget.Toast.LENGTH_SHORT).show();
                     });
@@ -164,10 +169,16 @@ public class DetailFragment extends Fragment {
             binding.btnSaveFloat.setVisibility(View.GONE);
             binding.btnCancel.setVisibility(View.GONE);
             binding.btnEdit.setVisibility(View.VISIBLE);
+
+            // Hide keyboard
+            android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager)
+                requireActivity().getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+
             // Reset edit fields to current values
             refreshEntryData();
         });
 
+        // Handle quick note EditText "Done" action
         // Remove the old save button click listener since we're using the floating button now
         binding.btnSave.setVisibility(View.GONE);
 
@@ -584,7 +595,7 @@ public class DetailFragment extends Fragment {
             });
         } else {
             // If selected video doesn't exist, show a toast message
-            String videoType = showFinalVideo ? "Final" : "Original";
+            String videoType = showFinalVideo ? "Switch Final" : "Switch Original";
             android.widget.Toast.makeText(requireContext(),
                 videoType + " video not available",
                 android.widget.Toast.LENGTH_SHORT).show();
@@ -596,7 +607,7 @@ public class DetailFragment extends Fragment {
 
     private void updateToggleButtonText() {
         if (binding.btnToggleVideo != null) {
-            binding.btnToggleVideo.setText(isShowingFinalVideo ? "Original" : "Final");
+            binding.btnToggleVideo.setText(isShowingFinalVideo ? "Switch Original" : "Switch Final");
         }
     }
 

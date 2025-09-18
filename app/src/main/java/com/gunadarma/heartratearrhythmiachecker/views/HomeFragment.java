@@ -64,6 +64,16 @@ public class HomeFragment extends Fragment {
                 .navigate(R.id.action_HomeFragment_to_RecordFragment);
         });
 
+        // How to Use floating action button
+        binding.fabHowToUse.setOnClickListener(v -> {
+            binding.howToUseTray.setVisibility(View.VISIBLE);
+        });
+
+        // Close tray button
+        binding.closeTrayButton.setOnClickListener(v -> {
+            binding.howToUseTray.setVisibility(View.GONE);
+        });
+
         // Seed button for demo (add to layout if not present)
         binding.seedButton.setOnClickListener(v -> {
             new Thread(() -> {

@@ -35,6 +35,13 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
   private final List<Long> signalTimestamps = new ArrayList<>();
   private static final int MAX_SIGNAL_HISTORY = 300; // Keep last 300 samples (10 seconds at 30fps)
 
+  // Heartbeat detection storage for step 3
+  private final List<Long> heartbeatTimestamps = new ArrayList<>();
+  private final List<Double> heartbeatSignalValues = new ArrayList<>();
+  private double lastPeakSignal = 0.0;
+  private long lastPeakTime = 0;
+  private static final double HEARTBEAT_THRESHOLD_FACTOR = 1.2; // Peak must be 20% above average
+
   // Signal projection and continuity variables
   private final List<Double> continuousSignalBuffer = new ArrayList<>();
   private final List<Long> continuousTimestamps = new ArrayList<>();
@@ -69,6 +76,15 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
   @Override
   public RPPGData getRPPGSignals(String videoPath) {
+    // RPPG heart rate extraction flow:
+    // 1. Open video file with OpenCV VideoCapture
+    // 2. Get video duration
+    // 3. extract heartbeats timestamps from rPPG signals frame by frame
+    // 4. Interpolate hand rPPG if heartbeat is missing from average heart rate
+    //    the goals to mimic actual heart rate as close as possible
+    // 5. Calculate heart rate metrics (min, max, average, baseline)
+    // 6. create output video & image of heartbeat overtime as video duration with hand detection overlays and rPPG info
+
     Log.i(TAG, "Starting hand palm rPPG analysis: " + videoPath);
 
     VideoCapture cap = new VideoCapture(videoPath);
