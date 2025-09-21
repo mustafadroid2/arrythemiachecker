@@ -105,12 +105,16 @@ public class MainMediaProcessingServiceImpl implements MainMediaProcessingServic
         // 3. Create heartbeats visualization using complete rPPG data (not just timestamps)
         imageGeneratorService.createHeartBeatsImage(rppgData, recordEntry.getId());
 
-        // 4. Update record status
+        // 4. Update record status with analyzed arrhythmia status
         double averageBpm = rppgData.getAverageBpm();
         int bpmForDatabase = (int) Math.round(averageBpm);
         recordEntry.setBeatsPerMinute(bpmForDatabase);
         recordEntry.setDuration(rppgData.getDurationSeconds());
+        recordEntry.setStatus(status); // Set the analyzed status
         recordEntry.setUpdatedAt(System.currentTimeMillis());
+
+        Log.i("MainMediaProcessingService", String.format("Heart rate analysis complete: %.1f BPM, Status: %s, Heartbeats: %d",
+                                                         averageBpm, status.name(), heartRateData.size()));
         System.out.println("success updateRecordStatus: " + recordEntry);
     }
 

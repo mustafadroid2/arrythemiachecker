@@ -1003,6 +1003,9 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
       // Simple BPM calculation - use the smoothed average heart rate from real-time processing
       double calculatedBPM = averageHeartRate;
 
+      // Extract heartbeat timestamps from signal peaks
+      List<Long> heartbeatTimestamps = extractHeartbeatTimestamps(greenSignals, timestamps, fps);
+
       // Create signal list
       List<RPPGData.Signal> signalList = new ArrayList<>();
       for (int i = 0; i < Math.min(greenSignals.size(), timestamps.size()); i++) {
@@ -1016,11 +1019,11 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
       int durationSeconds = (int)((timestamps.get(timestamps.size()-1) - timestamps.get(0)) / 1000);
 
-      Log.i(TAG, String.format("Heart rate analysis complete: %.1f BPM, %d signals in %d seconds",
-                               calculatedBPM, signalList.size(), durationSeconds));
+      Log.i(TAG, String.format("Heart rate analysis complete: %.1f BPM, %d signals, %d heartbeats in %d seconds",
+                               calculatedBPM, signalList.size(), heartbeatTimestamps.size(), durationSeconds));
 
       return RPPGData.builder()
-          .heartbeats(new ArrayList<>()) // Simplified - no individual heartbeat detection
+          .heartbeats(heartbeatTimestamps) // Return actual heartbeat timestamps
           .minBpm(calculatedBPM - 5.0)
           .maxBpm(calculatedBPM + 5.0)
           .averageBpm(calculatedBPM)
@@ -1032,6 +1035,153 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
     } catch (Exception e) {
       Log.e(TAG, "Error calculating heart rate metrics", e);
       return RPPGData.empty();
+    }
+  }
+
+  /**
+   * Extract heartbeat timestamps from signal peaks
+   */
+  private List<Long> extractHeartbeatTimestamps(List<Double> signals, List<Long> timestamps, double fps) {
+    List<Long> heartbeats = new ArrayList<>();
+
+    if (signals.size() < 60 || timestamps.size() != signals.size()) {
+      Log.w(TAG, "Insufficient data for heartbeat detection");
+      return heartbeats;
+    }
+
+    try {
+      // Calculate signal statistics for peak detection
+      double mean = signals.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+      double stdDev = Math.sqrt(signals.stream()
+          .mapToDouble(val -> Math.pow(val - mean, 2))
+          .average().orElse(0.0));
+
+      // Set dynamic threshold based on signal characteristics
+      double threshold = mean + (stdDev * 0.5); // Adjust sensitivity
+
+      // Minimum interval between heartbeats (in samples) to prevent false positives
+      int minIntervalSamples = (int)(fps * 0.4); // 0.4 seconds minimum (150 BPM max)
+
+      // Peak detection with improved algorithm
+      for (int i = 2; i < signals.size() - 2; i++) {
+        double current = signals.get(i);
+        double prev1 = signals.get(i - 1);
+        double prev2 = signals.get(i - 2);
+        double next1 = signals.get(i + 1);
+        double next2 = signals.get(i + 2);
+
+        // Check if current point is a local maximum above threshold
+        boolean isLocalMax = current > prev1 && current > next1 &&
+                            current > prev2 && current > next2 &&
+                            current > threshold;
+
+        if (isLocalMax) {
+          // Check minimum interval constraint
+          if (heartbeats.isEmpty() ||
+              (i - getLastPeakIndex(heartbeats, timestamps)) >= minIntervalSamples) {
+            heartbeats.add(timestamps.get(i));
+            Log.d(TAG, String.format("Heartbeat detected at %d ms, signal: %.2f",
+                                   timestamps.get(i), current));
+          }
+        }
+      }
+
+      Log.i(TAG, String.format("Detected %d heartbeats from %d signal samples",
+                               heartbeats.size(), signals.size()));
+
+    } catch (Exception e) {
+      Log.w(TAG, "Error in heartbeat detection", e);
+    }
+
+    return heartbeats;
+  }
+
+  /**
+   * Get the index of the last detected peak
+   */
+  private int getLastPeakIndex(List<Long> heartbeats, List<Long> timestamps) {
+    if (heartbeats.isEmpty()) return -1;
+
+    long lastHeartbeat = heartbeats.get(heartbeats.size() - 1);
+    for (int i = timestamps.size() - 1; i >= 0; i--) {
+      if (timestamps.get(i).equals(lastHeartbeat)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Estimate current BPM from signal data using FFT-based approach
+   */
+  private double estimateCurrentBPM(List<Double> signals, double fps) {
+    if (signals.size() < 60) return averageHeartRate; // Need at least 2 seconds of data
+
+    try {
+      // Simple peak counting approach for BPM estimation
+      double mean = signals.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+      double stdDev = Math.sqrt(signals.stream()
+          .mapToDouble(val -> Math.pow(val - mean, 2))
+          .average().orElse(0.0));
+
+      double threshold = mean + (stdDev * 0.3);
+      int peakCount = 0;
+
+      // Count peaks in the signal
+      for (int i = 2; i < signals.size() - 2; i++) {
+        double current = signals.get(i);
+        if (current > threshold &&
+            current > signals.get(i-1) && current > signals.get(i+1) &&
+            current > signals.get(i-2) && current > signals.get(i+2)) {
+          peakCount++;
+        }
+      }
+
+      // Calculate BPM from peak count
+      double durationSeconds = signals.size() / fps;
+      double estimatedBPM = (peakCount * 60.0) / durationSeconds;
+
+      // Clamp to reasonable range
+      estimatedBPM = Math.max(40, Math.min(200, estimatedBPM));
+
+      return estimatedBPM;
+
+    } catch (Exception e) {
+      Log.w(TAG, "Error estimating BPM", e);
+      return averageHeartRate;
+    }
+  }
+
+  /**
+   * Rotate frame to correct video orientation
+   */
+  private Mat rotateFrame(Mat frame, int rotationDegrees) {
+    if (rotationDegrees == 0) return frame;
+
+    try {
+      Mat rotated = new Mat();
+      Point center = new Point(frame.cols() / 2.0, frame.rows() / 2.0);
+      Mat rotationMatrix = Imgproc.getRotationMatrix2D(center, -rotationDegrees, 1.0);
+
+      // Calculate new frame size to avoid cropping
+      double cos = Math.abs(rotationMatrix.get(0, 0)[0]);
+      double sin = Math.abs(rotationMatrix.get(0, 1)[0]);
+
+      int newWidth = (int) (frame.rows() * sin + frame.cols() * cos);
+      int newHeight = (int) (frame.rows() * cos + frame.cols() * sin);
+
+      // Adjust translation
+      rotationMatrix.put(0, 2, rotationMatrix.get(0, 2)[0] + (newWidth / 2.0) - center.x);
+      rotationMatrix.put(1, 2, rotationMatrix.get(1, 2)[0] + (newHeight / 2.0) - center.y);
+
+      Imgproc.warpAffine(frame, rotated, rotationMatrix, new Size(newWidth, newHeight));
+
+      rotationMatrix.release();
+      return rotated;
+
+    } catch (Exception e) {
+      Log.w(TAG, "Error rotating frame", e);
+      return frame; // Return original frame if rotation fails
     }
   }
 
@@ -1051,75 +1201,8 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
       try {
         retriever.release();
       } catch (Exception e) {
-        Log.w(TAG, "Failed to release MediaMetadataRetriever", e);
+        Log.w(TAG, "Error releasing MediaMetadataRetriever", e);
       }
     }
   }
-
-  /**
-   * Rotate the frame to correct the orientation
-   */
-  private Mat rotateFrame(Mat frame, int rotationDegrees) {
-    Mat rotated = new Mat();
-    switch (rotationDegrees) {
-      case 90:
-        Core.transpose(frame, rotated);
-        Core.flip(rotated, rotated, 1);
-        break;
-      case 180:
-        Core.flip(frame, rotated, -1);
-        break;
-      case 270:
-        Core.transpose(frame, rotated);
-        Core.flip(rotated, rotated, 0);
-        break;
-      default:
-        return frame; // No rotation needed
-    }
-    return rotated;
   }
-
-  /**
-   * Estimate current BPM from signal data
-   */
-  private double estimateCurrentBPM(List<Double> signals, double fps) {
-    if (signals.size() < 60) {
-      return averageHeartRate; // Return current estimate if insufficient data
-    }
-
-    try {
-      // Simple peak detection for BPM estimation
-      List<Integer> peaks = new ArrayList<>();
-      double threshold = signals.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
-
-      for (int i = 1; i < signals.size() - 1; i++) {
-        if (signals.get(i) > signals.get(i-1) && signals.get(i) > signals.get(i+1) && signals.get(i) > threshold) {
-          if (peaks.isEmpty() || i - peaks.get(peaks.size()-1) > fps * 0.4) { // Min 0.4s between beats
-            peaks.add(i);
-          }
-        }
-      }
-
-      if (peaks.size() < 2) {
-        return averageHeartRate;
-      }
-
-      // Calculate average interval between peaks
-      double totalInterval = 0;
-      for (int i = 1; i < peaks.size(); i++) {
-        totalInterval += peaks.get(i) - peaks.get(i-1);
-      }
-
-      double avgInterval = totalInterval / (peaks.size() - 1);
-      double intervalSeconds = avgInterval / fps;
-      double bpm = 60.0 / intervalSeconds;
-
-      // Return reasonable BPM values only
-      return (bpm >= 40 && bpm <= 180) ? bpm : averageHeartRate;
-
-    } catch (Exception e) {
-      Log.w(TAG, "Error estimating BPM", e);
-      return averageHeartRate;
-    }
-  }
-}

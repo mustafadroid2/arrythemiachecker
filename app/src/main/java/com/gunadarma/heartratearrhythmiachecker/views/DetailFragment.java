@@ -415,6 +415,27 @@ public class DetailFragment extends Fragment {
         binding.textAddress.setVisibility(textVisibility);
         binding.textDuration.setVisibility(textVisibility);
         binding.textGender.setVisibility(textVisibility);
+
+        // When entering edit mode, focus the first text field and show keyboard
+        if (isEditing) {
+            // Post this to ensure the views are properly laid out first
+            binding.editPatientName.post(() -> {
+                binding.editPatientName.requestFocus();
+                // Show soft keyboard
+                android.view.inputmethod.InputMethodManager imm =
+                    (android.view.inputmethod.InputMethodManager) requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+                if (imm != null) {
+                    imm.showSoftInput(binding.editPatientName, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+                }
+            });
+        } else {
+            // When exiting edit mode, hide the keyboard
+            android.view.inputmethod.InputMethodManager imm =
+                (android.view.inputmethod.InputMethodManager) requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+            if (imm != null && getView() != null) {
+                imm.hideSoftInputFromWindow(getView().getWindowToken(), 0);
+            }
+        }
     }
 
     private void refreshEntryData() {
