@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Video Switch Pill Style -->
+    <style name="VideoSwitchPill" parent="Widget.Material3.Button.TextButton">
+        <item name="android:background">@drawable/video_pill_selector</item>
+        <item name="android:textColor">@color/video_pill_text_selector</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:elevation">0dp</item>
+    </style>
+
+    <!-- Status Tag Style (if not already exists) -->
+    <style name="StatusTag">
+        <item name="android:background">@drawable/status_tag_background</item>
+        <item name="android:paddingHorizontal">12dp</item>
+        <item name="android:paddingVertical">4dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textAllCaps">true</item>
+    </style>
+</resources>

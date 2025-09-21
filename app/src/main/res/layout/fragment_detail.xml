@@ -5,197 +5,266 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <ScrollView
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipeRefreshLayout"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
-        <LinearLayout
-            android:id="@+id/detailContent"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
 
-            <androidx.constraintlayout.widget.ConstraintLayout
-                android:id="@+id/videoContainer"
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+            <LinearLayout
+                android:id="@+id/detailContent"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="#000000">
+                android:paddingBottom="200dp"
+                android:orientation="vertical">
 
                 <androidx.constraintlayout.widget.ConstraintLayout
-                    android:layout_width="0dp"
-                    android:layout_height="0dp"
-                    app:layout_constraintWidth_percent="0.75"
-                    app:layout_constraintDimensionRatio="9:16"
-                    app:layout_constraintTop_toTopOf="parent"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toEndOf="parent">
+                    android:id="@+id/videoContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="#000000">
 
-                    <VideoView
-                        android:id="@+id/videoView"
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent"
+                    <androidx.constraintlayout.widget.ConstraintLayout
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        app:layout_constraintWidth_percent="0.75"
+                        app:layout_constraintDimensionRatio="9:16"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintEnd_toEndOf="parent">
+
+                        <VideoView
+                            android:id="@+id/videoView"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            app:layout_constraintTop_toTopOf="parent"
+                            app:layout_constraintBottom_toBottomOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintEnd_toEndOf="parent"/>
+
+                    </androidx.constraintlayout.widget.ConstraintLayout>
+                </androidx.constraintlayout.widget.ConstraintLayout>
+
+                <LinearLayout
+                    android:id="@+id/detailRecord"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingTop="12dp"
+                    android:paddingHorizontal="16dp">
+
+                    <ProgressBar
+                        android:id="@+id/progressBar"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:visibility="gone"
                         app:layout_constraintTop_toTopOf="parent"
                         app:layout_constraintBottom_toBottomOf="parent"
                         app:layout_constraintStart_toStartOf="parent"
                         app:layout_constraintEnd_toEndOf="parent"/>
 
-                </androidx.constraintlayout.widget.ConstraintLayout>
-            </androidx.constraintlayout.widget.ConstraintLayout>
-
-            <LinearLayout
-                android:id="@+id/detailRecord"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <ProgressBar
-                    android:id="@+id/progressBar"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:visibility="gone"
-                    app:layout_constraintTop_toTopOf="parent"
-                    app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toEndOf="parent"/>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical">
-
-
-                    <!-- Record details -->
-                    <TextView
-                        android:id="@+id/textId"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="ID: "
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp" />
-                    <Button
-                        android:id="@+id/btnPickDate"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Pick Date"
-                        android:layout_marginBottom="4dp"
-                        android:visibility="gone" />
-                    <TextView
-                        android:id="@+id/editDateLabel"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp"
-                        android:visibility="gone"
-                        android:text="" />
-
-
-                    <!-- Editable Fields -->
-                    <TextView
-                        android:id="@+id/textPatientName"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Name: "
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp" />
-                    <EditText
-                        android:id="@+id/editPatientName"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:hint="Edit Name"
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp"
-                        android:visibility="gone" />
-                    <TextView
-                        android:id="@+id/textNotes"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Notes: "
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp" />
-                    <EditText
-                        android:id="@+id/editNotes"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:hint="Edit Notes"
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp"
-                        android:visibility="gone" />
-                    <TextView
-                        android:id="@+id/textArrhythmia"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Status: "
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp" />
-                    <TextView
-                        android:id="@+id/textDuration"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Duration: "
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp" />
-                    <EditText
-                        android:id="@+id/editDuration"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:hint="Edit Duration (seconds)"
-                        android:inputType="number"
-                        android:textSize="16sp"
-                        android:layout_marginBottom="4dp"
-                        android:visibility="gone" />
-                    <TextView
-                        android:id="@+id/textHeartRate"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Heart Rate: "
-                        android:textSize="16sp"
-                        android:layout_marginBottom="12dp" />
-
-                    <!-- Heart rhythm timeline graph -->
-                    <ImageView
-                        android:id="@+id/graphView"
-                        android:layout_width="match_parent"
-                        android:layout_height="200dp"
-                        android:background="#EEE"
-                        android:layout_marginBottom="12dp" />
-
-                    <!-- Action buttons -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center">
-                        <Button
-                            android:id="@+id/btnProcess"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Process"
-                            android:layout_marginEnd="16dp" />
-                        <Button
-                            android:id="@+id/btnSave"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Save"
-                            android:layout_marginEnd="16dp"
-                            android:visibility="gone" />
-                        <Button
-                            android:id="@+id/btnDelete"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Delete"
-                            android:layout_marginEnd="16dp" />
-                        <Button
-                            android:id="@+id/btnShare"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Share"
-                            android:layout_marginEnd="16dp" />
-                    </LinearLayout>
+                        android:orientation="vertical">
 
+
+                        <!-- Record details -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginBottom="8dp">
+
+                            <TextView
+                                android:id="@+id/textId"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="ID: "
+                                android:textSize="16sp" />
+
+                            <TextView
+                                android:id="@+id/textStatus"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                style="@style/StatusTag"
+                                android:text="Status" />
+                        </LinearLayout>
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:background="#DDDDDD"
+                            android:layout_marginBottom="12dp" />
+
+                        <!-- Editable Fields -->
+                        <TextView
+                            android:id="@+id/textPatientName"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Name: "
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp" />
+                        <EditText
+                            android:id="@+id/editPatientName"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Edit Name"
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp"
+                            android:visibility="gone" />
+
+                        <!-- Age -->
+                        <TextView
+                            android:id="@+id/textAge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Age: "
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp" />
+                        <EditText
+                            android:id="@+id/editAge"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Edit Age"
+                            android:inputType="number"
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp"
+                            android:visibility="gone" />
+
+                        <!-- Gender -->
+                        <TextView
+                            android:id="@+id/textGender"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Gender: "
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp" />
+                        <RadioGroup
+                            android:id="@+id/radioGroupGender"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:layout_marginBottom="4dp"
+                            android:visibility="gone">
+                            <RadioButton
+                                android:id="@+id/radioMale"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Male"
+                                android:layout_marginEnd="16dp" />
+                            <RadioButton
+                                android:id="@+id/radioFemale"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Female" />
+                        </RadioGroup>
+
+                        <!-- Address -->
+                        <TextView
+                            android:id="@+id/textAddress"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Address: "
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp" />
+                        <EditText
+                            android:id="@+id/editAddress"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Edit Address"
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp"
+                            android:visibility="gone" />
+                        <TextView
+                            android:id="@+id/textNotes"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Notes: "
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp" />
+                        <EditText
+                            android:id="@+id/editNotes"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Edit Notes"
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp"
+                            android:visibility="gone" />
+                        <TextView
+                            android:id="@+id/textDuration"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Duration: "
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp" />
+                        <EditText
+                            android:id="@+id/editDuration"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Edit Duration (seconds)"
+                            android:inputType="number"
+                            android:textSize="16sp"
+                            android:layout_marginBottom="4dp"
+                            android:visibility="gone" />
+                        <TextView
+                            android:id="@+id/textHeartRate"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Heart Rate: "
+                            android:textSize="16sp"
+                            android:layout_marginBottom="12dp" />
+
+                        <!-- Heart rhythm timeline graph -->
+                        <ImageView
+                            android:id="@+id/graphView"
+                            android:layout_width="match_parent"
+                            android:layout_height="120dp"
+                            android:layout_marginBottom="12dp" />
+
+                        <!-- Action buttons -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center">
+                            <Button
+                                android:id="@+id/btnProcess"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Process"
+                                android:layout_marginEnd="16dp" />
+                            <Button
+                                android:id="@+id/btnSave"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Save"
+                                android:layout_marginEnd="16dp"
+                                android:visibility="gone" />
+                            <Button
+                                android:id="@+id/btnDelete"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Delete"
+                                android:layout_marginEnd="16dp" />
+                            <Button
+                                android:id="@+id/btnShare"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Share"
+                                android:layout_marginEnd="16dp" />
+                        </LinearLayout>
+
+                    </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
-        </LinearLayout>
-    </ScrollView>
+        </ScrollView>
+
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
     <LinearLayout
         android:id="@+id/floating_buttons_container"
@@ -226,6 +295,21 @@
             app:backgroundTint="#4CAF50"
             app:tint="#FFFFFF"
             app:srcCompat="@android:drawable/ic_menu_save"/>
+
+        <!-- Floating Video Switch Toggle -->
+        <Button
+            android:id="@+id/btnToggleVideo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Final"
+            android:textSize="12sp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="20dp"
+            android:background="@drawable/video_switch_background"
+            android:elevation="8dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent" />
 
         <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/btnEdit"
