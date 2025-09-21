@@ -117,6 +117,7 @@ public class DetailFragment extends Fragment {
         binding.btnEdit.setOnClickListener(v -> {
             setEditMode(true);
             binding.btnEdit.setVisibility(View.GONE);
+            binding.btnToggleVideo.setVisibility(View.GONE);
             binding.btnSaveFloat.setVisibility(View.VISIBLE);
             binding.btnCancel.setVisibility(View.VISIBLE);
         });
@@ -152,6 +153,7 @@ public class DetailFragment extends Fragment {
                         binding.btnSaveFloat.setVisibility(View.GONE);
                         binding.btnCancel.setVisibility(View.GONE);
                         binding.btnEdit.setVisibility(View.VISIBLE);
+                        binding.btnToggleVideo.setVisibility(View.VISIBLE);
 
                         // Hide keyboard
                         android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager)
@@ -169,6 +171,7 @@ public class DetailFragment extends Fragment {
             binding.btnSaveFloat.setVisibility(View.GONE);
             binding.btnCancel.setVisibility(View.GONE);
             binding.btnEdit.setVisibility(View.VISIBLE);
+            binding.btnToggleVideo.setVisibility(View.VISIBLE);
 
             // Hide keyboard
             android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager)

@@ -305,7 +305,7 @@
             android:textSize="12sp"
             android:layout_marginStart="12dp"
             android:layout_marginEnd="12dp"
-            android:layout_marginBottom="100dp"
+            android:layout_marginBottom="20dp"
             android:background="@drawable/video_switch_background"
             android:elevation="8dp"
             app:layout_constraintBottom_toBottomOf="parent"
