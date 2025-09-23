@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.gunadarma.heartratearrhythmiachecker.model.RPPGData;
+import com.gunadarma.heartratearrhythmiachecker.service.MainMediaProcessingService;
 import com.gunadarma.heartratearrhythmiachecker.service.MediaPipeFaceTracker;
 
 import org.opencv.core.Core;
@@ -44,7 +45,7 @@ public class RPPGHeadFaceServiceImpl implements RPPGService {
   }
 
   @Override
-  public RPPGData getRPPGSignals(String videoPath) {
+  public RPPGData getRPPGSignals(String videoPath, MainMediaProcessingService.ProgressCallback progressCallback) {
     Log.i(TAG, "Starting rPPG signal extraction from: " + videoPath);
 
     VideoCapture cap = new VideoCapture(videoPath);

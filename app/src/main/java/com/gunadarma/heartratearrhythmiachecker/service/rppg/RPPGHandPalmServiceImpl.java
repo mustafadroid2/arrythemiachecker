@@ -6,6 +6,7 @@ import android.util.Log;
 
 import com.gunadarma.heartratearrhythmiachecker.constant.AppConstant;
 import com.gunadarma.heartratearrhythmiachecker.model.RPPGData;
+import com.gunadarma.heartratearrhythmiachecker.service.MainMediaProcessingService;
 import com.gunadarma.heartratearrhythmiachecker.service.MediaPipeHandTracker;
 
 import org.opencv.core.Core;
@@ -31,20 +32,10 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
   // Store signal history for ECG graph visualization
   private final List<Double> signalHistory = new ArrayList<>();
-  // Add synchronized timestamp tracking for ECG waveform
-  private final List<Long> signalTimestamps = new ArrayList<>();
   private static final int MAX_SIGNAL_HISTORY = 300; // Keep last 300 samples (10 seconds at 30fps)
-
-  // Heartbeat detection storage for step 3
-  private final List<Long> heartbeatTimestamps = new ArrayList<>();
-  private final List<Double> heartbeatSignalValues = new ArrayList<>();
-  private double lastPeakSignal = 0.0;
-  private long lastPeakTime = 0;
-  private static final double HEARTBEAT_THRESHOLD_FACTOR = 1.2; // Peak must be 20% above average
 
   // Signal projection and continuity variables
   private final List<Double> continuousSignalBuffer = new ArrayList<>();
-  private final List<Long> continuousTimestamps = new ArrayList<>();
   private Double lastValidSignal = null;
   private Long lastValidTimestamp;
 
@@ -75,7 +66,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
   }
 
   @Override
-  public RPPGData getRPPGSignals(String videoPath) {
+  public RPPGData getRPPGSignals(String videoPath, MainMediaProcessingService.ProgressCallback progressCallback) {
     // RPPG heart rate extraction flow:
     // 1. Open video file with OpenCV VideoCapture
     // 2. Get video duration
@@ -108,7 +99,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
                                needsRotation ? " (needs correction)" : ""));
 
       // Process video for hand detection and rPPG calculation
-      RPPGData rppgData = processHandDetection(videoPath, cap, fps, rotationDegrees);
+      RPPGData rppgData = processHandDetection(videoPath, cap, fps, rotationDegrees, totalFrames, progressCallback);
 
       Log.i(TAG, "Hand palm rPPG analysis completed");
 
@@ -122,16 +113,15 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
     }
   }
 
-  private RPPGData processHandDetection(String videoPath, VideoCapture cap, double fps, int rotationDegrees) {
+  private RPPGData processHandDetection(String videoPath, VideoCapture cap, double fps, int rotationDegrees,
+                                       int totalFrames, MainMediaProcessingService.ProgressCallback progressCallback) {
     Mat frame = new Mat();
     int frameCount = 0;
     int palmFrames = 0;
 
     // rPPG signal storage
     List<RPPGData.Signal> signals = new ArrayList<>();
-    List<Double> redSignals = new ArrayList<>();
     List<Double> greenSignals = new ArrayList<>();
-    List<Double> blueSignals = new ArrayList<>();
     List<Long> timestamps = new ArrayList<>();
 
     // Initialize video writer for output with hand detection overlays
@@ -197,10 +187,6 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
         if (!writerOpened) {
           Log.e(TAG, "Failed to open video writer with any codec. Continuing without video output.");
-          Log.e(TAG, "Output path: " + outputPath);
-          Log.e(TAG, "Frame size: " + frameSize.width + "x" + frameSize.height);
-          Log.e(TAG, "FPS: " + fps);
-          // Continue processing without video output
         }
       }
 
@@ -210,12 +196,9 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
       try {
         // Try MediaPipe hand detection
-        MediaPipeHandTracker.HandDetectionResult handResult = null;
-        if (mpHandTracker != null) {
-          handResult = mpHandTracker.detectHand(frame);
-        }
+        MediaPipeHandTracker.HandDetectionResult handResult = mpHandTracker.detectHand(frame);
 
-        RPPGData.Signal signal = null;
+        RPPGData.Signal signal;
         boolean isPalmDetected = handResult != null && handResult.palmROI != null && isValidPalmROI(handResult.palmROI, frame);
 
         if (isPalmDetected) {
@@ -228,33 +211,31 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
           mpHandTracker.drawHandAnnotations(overlayFrame, handResult);
 
           // Draw rPPG info on palm region
-          drawRPPGOverlays(overlayFrame, handResult.palmROI, signal);
+          if (signal != null) {
+            drawRPPGOverlays(overlayFrame, handResult.palmROI, signal);
+          }
         } else {
           // Palm not detected - try signal projection
-          signal = processFrameWithProjection(timestamp, fps);
+          signal = processFrameWithProjection(timestamp);
 
           // Draw projection indicator on frame
           if (signal != null) {
-            drawProjectionIndicator(overlayFrame, missedFrameCount, MAX_INTERPOLATION_FRAMES);
+            drawProjectionIndicator(overlayFrame, missedFrameCount);
           }
         }
 
         // Add signal to collections if available (either real or projected)
         if (signal != null) {
           signals.add(signal);
-          redSignals.add(signal.getRedChannel());
           greenSignals.add(signal.getGreenChannel());
-          blueSignals.add(signal.getBlueChannel());
           timestamps.add(signal.getTimestamp());
 
           // Update synchronized signal history for ECG graph visualization
           signalHistory.add(signal.getGreenChannel());
-          signalTimestamps.add(signal.getTimestamp());
 
-          // Keep only recent history with synchronized timestamps
+          // Keep only recent history
           while (signalHistory.size() > MAX_SIGNAL_HISTORY) {
             signalHistory.remove(0);
-            signalTimestamps.remove(0);
           }
         }
 
@@ -265,6 +246,14 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
         // Write frame to output video only if writer is available
         if (writer != null && writer.isOpened()) {
           writer.write(overlayFrame);
+        }
+
+        // Update progress callback with frame-by-frame progress
+        if (progressCallback != null && totalFrames > 0) {
+          String phase = String.format("Processing frame %d/%d - %s",
+                                      frameCount, totalFrames,
+                                      isPalmDetected ? "Palm detected" : "Estimating signal");
+          progressCallback.onProgressUpdate(frameCount, totalFrames, phase);
         }
 
       } catch (Exception e) {
@@ -345,7 +334,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
   /**
    * Process frame with signal projection when palm detection fails
    */
-  private RPPGData.Signal processFrameWithProjection(long timestamp, double fps) {
+  private RPPGData.Signal processFrameWithProjection(long timestamp) {
     missedFrameCount++;
 
     if (lastValidSignal == null || missedFrameCount > MAX_INTERPOLATION_FRAMES) {
@@ -412,13 +401,11 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
   private void updateSignalContinuity(double signal, long timestamp) {
     // Add to continuous buffer
     continuousSignalBuffer.add(signal);
-    continuousTimestamps.add(timestamp);
 
     // Maintain buffer size
     int maxBufferSize = 150; // 5 seconds at 30fps
     while (continuousSignalBuffer.size() > maxBufferSize) {
       continuousSignalBuffer.remove(0);
-      continuousTimestamps.remove(0);
     }
 
     // Update running statistics
@@ -465,19 +452,19 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
     double sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
 
     for (int i = 0; i < recentSignals.size(); i++) {
-      double x = i;
       double y = recentSignals.get(i);
-      sumX += x;
+      sumX += i;
       sumY += y;
-      sumXY += x * y;
-      sumX2 += x * x;
+      sumXY += i * y;
+      sumX2 += i * i;
     }
 
     int n = recentSignals.size();
-    signalTrend = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
-
-    // Limit trend to reasonable values
-    signalTrend = Math.max(-5.0, Math.min(5.0, signalTrend));
+    if (n * sumX2 - sumX * sumX != 0) {
+      signalTrend = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+      // Limit trend to reasonable values
+      signalTrend = Math.max(-5.0, Math.min(5.0, signalTrend));
+    }
   }
 
   /**
@@ -750,19 +737,13 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
 
     // Check maximum size to avoid including too much background
     int maxSize = Math.min(frame.cols(), frame.rows()) / 3;
-    if (palmROI.width > maxSize || palmROI.height > maxSize) {
-      return false;
-    }
-
-    return true;
+    return !(palmROI.width > maxSize || palmROI.height > maxSize);
   }
 
   /**
    * Draw rPPG-specific overlays on palm region
    */
   private void drawRPPGOverlays(Mat frame, Rect palmROI, RPPGData.Signal signal) {
-    if (signal == null) return;
-
     try {
       // Draw signal strength indicator
       int signalStrength = (int)(signal.getGreenChannel() / 2.55); // Convert to 0-100 scale
@@ -788,7 +769,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
           strengthColor, -1);
 
       // Signal value text
-      String signalText = String.format("G:%.0f", signal.getGreenChannel());
+      String signalText = String.format(Locale.US, "G:%.0f", signal.getGreenChannel());
       Imgproc.putText(frame, signalText,
           new Point(palmROI.x, palmROI.y + palmROI.height + 20),
           Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, new Scalar(255, 255, 255), 1);
@@ -801,12 +782,12 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
   /**
    * Draw projection indicator when using estimated signals
    */
-  private void drawProjectionIndicator(Mat frame, int missedFrames, int maxFrames) {
+  private void drawProjectionIndicator(Mat frame, int missedFrames) {
     try {
       int frameWidth = frame.cols();
 
       // Calculate projection confidence
-      double confidence = 1.0 - ((double)missedFrames / maxFrames);
+      double confidence = 1.0 - ((double)missedFrames / MAX_INTERPOLATION_FRAMES);
 
       // Draw projection status
       String projectionText = String.format(Locale.US, "PROJECTING (%.0f%% confidence)", confidence * 100);
@@ -891,7 +872,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
                      fontFace, 1.0, statusColor, 3);
 
       // Draw ECG-style graph at the bottom of the frame
-      drawECGGraph(frame, frameCount);
+      drawECGGraph(frame);
 
     } catch (Exception e) {
       Log.w(TAG, "Error drawing rPPG analysis overlays with projection", e);
@@ -901,7 +882,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
   /**
    * Draw ECG-style graph visualization with realistic ECG waveforms
    */
-  private void drawECGGraph(Mat frame, int frameCount) {
+  private void drawECGGraph(Mat frame) {
     try {
       int frameWidth = frame.cols();
       int frameHeight = frame.rows();
@@ -934,7 +915,7 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
       if (signalHistory.size() < 2) {
         // Show message when no signal data available
         Imgproc.putText(frame, "Waiting for palm detection...",
-          new Point(graphX + graphWidth/2 - 100, graphY + graphHeight/2),
+          new Point(graphX + graphWidth/2.0 - 100, graphY + graphHeight/2.0),
           Imgproc.FONT_HERSHEY_SIMPLEX, 0.6, new Scalar(150, 150, 150), 1);
         return;
       }
@@ -1189,20 +1170,13 @@ public class RPPGHandPalmServiceImpl implements RPPGService {
    * Get the rotation of the video in degrees using MediaMetadataRetriever
    */
   private int getVideoRotation(String videoPath) {
-    MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-    try {
+    try (MediaMetadataRetriever retriever = new MediaMetadataRetriever()) {
       retriever.setDataSource(videoPath);
       String rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
       return rotation != null ? Integer.parseInt(rotation) : 0;
     } catch (Exception e) {
       Log.w(TAG, "Failed to get video rotation", e);
       return 0;
-    } finally {
-      try {
-        retriever.release();
-      } catch (Exception e) {
-        Log.w(TAG, "Error releasing MediaMetadataRetriever", e);
-      }
     }
   }
-  }
+}

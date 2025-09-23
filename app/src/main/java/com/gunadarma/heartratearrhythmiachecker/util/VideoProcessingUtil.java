@@ -7,6 +7,7 @@ import android.widget.Toast;
 
 import com.gunadarma.heartratearrhythmiachecker.model.RecordEntry;
 import com.gunadarma.heartratearrhythmiachecker.service.DataRecordServiceImpl;
+import com.gunadarma.heartratearrhythmiachecker.service.MainMediaProcessingService;
 import com.gunadarma.heartratearrhythmiachecker.service.MainMediaProcessingServiceImpl;
 
 /**
@@ -57,31 +58,63 @@ public class VideoProcessingUtil {
                     dataRecordService.saveData(recordEntry);
 
                     callback.runOnUiThread(() -> {
-                        progressDialog.setProgress(10);
-                        progressDialog.setMessage("Record saved. Starting video analysis...");
+                        progressDialog.setProgress(5);
+                        progressDialog.setMessage("Record saved. Initializing video analysis...");
                     });
 
-                    // Step 2: Extract heart rate signals
-                    callback.runOnUiThread(() -> {
-                        progressDialog.setProgress(20);
-                        progressDialog.setMessage("Extracting heart rate signals...");
-                    });
-
-                    // Step 3: Process the video using MainMediaProcessingServiceImpl
+                    // Step 2: Process the video using MainMediaProcessingServiceImpl with progress callbacks
                     MainMediaProcessingServiceImpl mediaProcessingService = new MainMediaProcessingServiceImpl(callback.getContext());
-                    mediaProcessingService.createHeartBeatsVideo(recordEntry);
+
+                    // Create progress callback to receive frame-by-frame updates
+                    MainMediaProcessingService.ProgressCallback videoProgressCallback = new MainMediaProcessingService.ProgressCallback() {
+                        @Override
+                        public void onProgressUpdate(int currentFrame, int totalFrames, String phase) {
+                            // Calculate progress from 10% to 85% based on frame processing
+                            int baseProgress = 10;
+                            int maxProgress = 85;
+                            int frameProgress = totalFrames > 0 ?
+                                (int) ((currentFrame / (float) totalFrames) * (maxProgress - baseProgress)) : 0;
+                            int totalProgress = baseProgress + frameProgress;
+
+                            callback.runOnUiThread(() -> {
+                                progressDialog.setProgress(totalProgress);
+                                progressDialog.setMessage(String.format("%s (%d/%d frames)",
+                                                         phase, currentFrame, totalFrames));
+                            });
+                        }
+
+                        @Override
+                        public void onPhaseChanged(String phase) {
+                            callback.runOnUiThread(() -> {
+                                // Update progress based on phase
+                                if (phase.contains("Initializing")) {
+                                    progressDialog.setProgress(10);
+                                } else if (phase.contains("Analyzing heart rate")) {
+                                    progressDialog.setProgress(85);
+                                } else if (phase.contains("Generating")) {
+                                    progressDialog.setProgress(90);
+                                } else if (phase.contains("complete")) {
+                                    progressDialog.setProgress(95);
+                                }
+                                progressDialog.setMessage(phase);
+                            });
+                        }
+                    };
+
+                    // Process with frame-by-frame progress updates
+                    mediaProcessingService.createHeartBeatsVideo(recordEntry, videoProgressCallback);
 
                     callback.runOnUiThread(() -> {
-                        progressDialog.setProgress(80);
-                        progressDialog.setMessage("Generating heart rate timeline...");
+                        progressDialog.setProgress(95);
+                        progressDialog.setMessage("Saving results...");
                     });
 
-                    // Step 4: Update record status after processing
+                    // Step 3: Update record status after processing
                     if (recordEntry != null) {
                         dataRecordService.saveData(recordEntry);
                     }
 
-                    // Step 5: Final progress update
+                    // Step 4: Final progress update
                     callback.runOnUiThread(() -> {
                         progressDialog.setProgress(100);
                         progressDialog.setMessage("Processing complete!");

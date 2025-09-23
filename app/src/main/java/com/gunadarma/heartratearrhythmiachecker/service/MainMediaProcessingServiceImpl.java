@@ -80,6 +80,11 @@ public class MainMediaProcessingServiceImpl implements MainMediaProcessingServic
 
     @Override
     public void createHeartBeatsVideo(RecordEntry recordEntry) {
+        createHeartBeatsVideo(recordEntry, null);
+    }
+
+    @Override
+    public void createHeartBeatsVideo(RecordEntry recordEntry, ProgressCallback progressCallback) {
         // Get the proper file path using context
         File videoFile = new File(
           context.getExternalFilesDir(null),
@@ -87,20 +92,34 @@ public class MainMediaProcessingServiceImpl implements MainMediaProcessingServic
         );
         String videoPath = videoFile.getAbsolutePath();
 
-        // 1. Extract complete rPPG data based on current detection mode
-        RPPGData rppgData;
-        if (currentMode == DetectionMode.HAND) {
-            rppgData = rppgHandPalmService.getRPPGSignals(videoPath);
-        } else {
-            rppgData = rppgHeadFaceService.getRPPGSignals(videoPath);
+        // Notify phase change
+        if (progressCallback != null) {
+            progressCallback.onPhaseChanged("Initializing rPPG signal extraction...");
         }
 
+        // 1. Extract complete rPPG data based on current detection mode with progress callbacks
+        RPPGData rppgData;
+        if (currentMode == DetectionMode.HAND) {
+            rppgData = rppgHandPalmService.getRPPGSignals(videoPath, progressCallback);
+        } else {
+            rppgData = rppgHeadFaceService.getRPPGSignals(videoPath, progressCallback);
+        }
+
+        // Notify phase change
+        if (progressCallback != null) {
+            progressCallback.onPhaseChanged("Analyzing heart rate data...");
+        }
 
         // Extract heartbeat data for arrhythmia analysis
         List<Long> heartRateData = rppgData.getHeartbeats();
 
         // 2. Analyze for arrhythmia
         RecordEntry.Status status = analyzeArrhythmia(heartRateData);
+
+        // Notify phase change
+        if (progressCallback != null) {
+            progressCallback.onPhaseChanged("Generating heart rate visualization...");
+        }
 
         // 3. Create heartbeats visualization using complete rPPG data (not just timestamps)
         imageGeneratorService.createHeartBeatsImage(rppgData, recordEntry.getId());
@@ -116,6 +135,10 @@ public class MainMediaProcessingServiceImpl implements MainMediaProcessingServic
         Log.i("MainMediaProcessingService", String.format("Heart rate analysis complete: %.1f BPM, Status: %s, Heartbeats: %d",
                                                          averageBpm, status.name(), heartRateData.size()));
         System.out.println("success updateRecordStatus: " + recordEntry);
+
+        if (progressCallback != null) {
+            progressCallback.onPhaseChanged("Processing complete!");
+        }
     }
 
     private RecordEntry.Status analyzeArrhythmia(List<Long> heartbeats) {
