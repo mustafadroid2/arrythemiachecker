@@ -236,7 +236,7 @@
                                 android:id="@+id/btnProcess"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Process"
+                                android:text="Re-Process"
                                 android:layout_marginEnd="16dp" />
                             <Button
                                 android:id="@+id/btnSave"
@@ -250,12 +250,6 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="Delete"
-                                android:layout_marginEnd="16dp" />
-                            <Button
-                                android:id="@+id/btnShare"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Share"
                                 android:layout_marginEnd="16dp" />
                         </LinearLayout>
 
@@ -297,19 +291,15 @@
             app:srcCompat="@android:drawable/ic_menu_save"/>
 
         <!-- Floating Video Switch Toggle -->
-        <Button
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/btnToggleVideo"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Final"
-            android:textSize="12sp"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:layout_marginBottom="20dp"
-            android:background="@drawable/video_switch_background"
-            android:elevation="8dp"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toStartOf="parent" />
+            android:layout_marginEnd="8dp"
+            android:contentDescription="Toggle Video"
+            app:backgroundTint="#2196F3"
+            app:tint="#FFFFFF"
+            app:srcCompat="@android:drawable/ic_media_play"/>
 
         <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/btnEdit"

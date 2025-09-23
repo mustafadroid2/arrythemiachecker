@@ -6,6 +6,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import androidx.annotation.NonNull;
+import androidx.activity.OnBackPressedCallback;
 import androidx.fragment.app.Fragment;
 import androidx.navigation.fragment.NavHostFragment;
 
@@ -77,6 +78,17 @@ public class DetailFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+
+        // Enable back button functionality
+        requireActivity().getOnBackPressedDispatcher().addCallback(getViewLifecycleOwner(),
+            new OnBackPressedCallback(true) {
+                @Override
+                public void handleOnBackPressed() {
+                    // Navigate back to HomeFragment
+                    NavHostFragment.findNavController(DetailFragment.this)
+                            .navigate(R.id.action_DetailFragment_to_HomeFragment);
+                }
+            });
 
         // Setup pull-to-refresh
         binding.swipeRefreshLayout.setOnRefreshListener(() -> {
@@ -308,14 +320,6 @@ public class DetailFragment extends Fragment {
                         .setNegativeButton("No", null)
                         .show();
             }
-        });
-
-        // Share record
-        binding.btnShare.setOnClickListener(v -> {
-            android.content.Intent shareIntent = new android.content.Intent(android.content.Intent.ACTION_SEND);
-            shareIntent.setType("text/plain");
-            shareIntent.putExtra(android.content.Intent.EXTRA_TEXT, "Hello World");
-            startActivity(android.content.Intent.createChooser(shareIntent, "Share via"));
         });
 
         // Set up click listener for graph image zoom
@@ -631,7 +635,8 @@ public class DetailFragment extends Fragment {
 
     private void updateToggleButtonText() {
         if (binding.btnToggleVideo != null) {
-            binding.btnToggleVideo.setText(isShowingFinalVideo ? "Switch Original" : "Switch Final");
+            String message = isShowingFinalVideo ? "Showing Final Video" : "Showing Original Video";
+            android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_SHORT).show();
         }
     }
 

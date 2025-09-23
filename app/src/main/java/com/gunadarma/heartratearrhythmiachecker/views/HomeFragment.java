@@ -76,7 +76,15 @@ public class HomeFragment extends Fragment {
 
         // Export CSV floating action button
         binding.fabExportCsv.setOnClickListener(v -> {
-            exportDataToCsv();
+            // Show confirmation dialog before exporting
+            new androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                    .setTitle("Export Data")
+                    .setMessage("Export all heart rate data to CSV file in Downloads folder?")
+                    .setPositiveButton("Yes", (dialog, which) -> {
+                        exportDataToCsv();
+                    })
+                    .setNegativeButton("No", null)
+                    .show();
         });
 
         // How to Use floating action button
@@ -198,37 +206,21 @@ public class HomeFragment extends Fragment {
         SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
 
         // CSV Header
-        csvBuilder.append("ID,Patient Name,Age,Gender,Address,Created Date,Updated Date,")
-                  .append("Status,Duration (seconds),Heart Rate (BPM),Notes,Heartbeat Count,Heartbeat Timestamps\n");
+        csvBuilder.append("ID,Date,Patient Name,Age,Gender,Address,")
+                  .append("Status,Duration (seconds),Heart Rate (BPM),Notes\n");
 
         // CSV Data rows
         for (com.gunadarma.heartratearrhythmiachecker.model.RecordEntry record : records) {
             csvBuilder.append(escapeCsvValue(String.valueOf(record.getId()))).append(",");
-            csvBuilder.append(escapeCsvValue(record.getPatientName() != null ? record.getPatientName() : "")).append(",");
+            csvBuilder.append(escapeCsvValue(dateFormat.format(new Date(record.getCreateAt())))).append(",");
+            csvBuilder.append(escapeCsvValue(record.getPatientName() != null ? record.getPatientName() : "unnamed")).append(",");
             csvBuilder.append(escapeCsvValue(record.getAge() != null ? record.getAge().toString() : "")).append(",");
             csvBuilder.append(escapeCsvValue(record.getGender() != null ? record.getGender() : "")).append(",");
-            csvBuilder.append(escapeCsvValue(record.getAddress() != null ? record.getAddress() : "")).append(",");
-            csvBuilder.append(escapeCsvValue(dateFormat.format(new Date(record.getCreateAt())))).append(",");
-            csvBuilder.append(escapeCsvValue(dateFormat.format(new Date(record.getUpdatedAt())))).append(",");
+            csvBuilder.append(escapeCsvValue(record.getAddress() != null ? record.getAddress() : "-")).append(",");
             csvBuilder.append(escapeCsvValue(record.getStatus() != null ? record.getStatus().getValue() : "")).append(",");
             csvBuilder.append(escapeCsvValue(String.valueOf(record.getDuration()))).append(",");
             csvBuilder.append(escapeCsvValue(String.valueOf(record.getBeatsPerMinute()))).append(",");
-            csvBuilder.append(escapeCsvValue(record.getNotes() != null ? record.getNotes() : "")).append(",");
-
-            // Handle heartbeats list
-            if (record.getHeartbeats() != null && !record.getHeartbeats().isEmpty()) {
-                csvBuilder.append(escapeCsvValue(String.valueOf(record.getHeartbeats().size()))).append(",");
-                // Convert heartbeat timestamps to space-separated string
-                StringBuilder heartbeatsStr = new StringBuilder();
-                for (int i = 0; i < record.getHeartbeats().size(); i++) {
-                    if (i > 0) heartbeatsStr.append(" ");
-                    heartbeatsStr.append(record.getHeartbeats().get(i));
-                }
-                csvBuilder.append(escapeCsvValue(heartbeatsStr.toString()));
-            } else {
-                csvBuilder.append("0,");
-                csvBuilder.append("");
-            }
+            csvBuilder.append(escapeCsvValue(record.getNotes() != null ? record.getNotes() : "")).append("");
 
             csvBuilder.append("\n");
         }

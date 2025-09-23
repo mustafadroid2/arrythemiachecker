@@ -2,6 +2,8 @@
 .gradle
 /local.properties
 /.idea/caches
+/.idea/copilot.data.migration.agent.xml
+/.idea/copilot.data.migration.edit.xml
 /.idea/libraries
 /.idea/modules.xml
 /.idea/workspace.xml
